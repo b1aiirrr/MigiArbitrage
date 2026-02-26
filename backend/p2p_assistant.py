@@ -12,7 +12,7 @@ from typing import Optional
 
 import aiohttp
 
-from backend.config import (
+from config import (
     PAYMENT_METHODS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,

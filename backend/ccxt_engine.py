@@ -17,7 +17,7 @@ from typing import Optional
 import ccxt.pro as ccxtpro
 import ccxt
 
-from backend.config import (
+from config import (
     ENABLED_EXCHANGES,
     EXCHANGE_API_KEYS,
     SPOT_SYMBOLS,
@@ -25,7 +25,7 @@ from backend.config import (
     MEMORY_LIMIT_MB,
     MEMORY_CHECK_INTERVAL,
 )
-from backend.orderbook import OrderBookManager
+from orderbook import OrderBookManager
 
 logger = logging.getLogger("migi.ccxt")
 

@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from backend.config import (
+from config import (
     PREFERRED_NETWORKS,
     NETWORK_CONGESTION_WARN_SECS,
     NETWORK_CONGESTION_BLOCK_SECS,

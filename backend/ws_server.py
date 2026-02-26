@@ -16,7 +16,7 @@ import orjson
 import websockets.asyncio.server as ws_server_mod
 from websockets.http11 import Response
 
-from backend.config import WS_SERVER_HOST, WS_SERVER_PORT, ALERT_HISTORY_SIZE, WS_ALLOWED_ORIGINS
+from config import WS_SERVER_HOST, WS_SERVER_PORT, ALERT_HISTORY_SIZE, WS_ALLOWED_ORIGINS
 
 logger = logging.getLogger("migi.wsserver")
 

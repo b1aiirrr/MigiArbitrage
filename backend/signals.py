@@ -12,8 +12,8 @@ import pandas_ta as ta
 from datetime import datetime
 from typing import Optional
 
-from backend.config import SIGNAL_SYMBOLS, SIGNALS_POLL_INTERVAL
-from backend.ccxt_engine import CCXTEngine
+from config import SIGNAL_SYMBOLS, SIGNALS_POLL_INTERVAL
+from ccxt_engine import CCXTEngine
 
 logger = logging.getLogger("migi.signals")
 

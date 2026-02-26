@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from backend.orderbook import OrderBookManager
+from orderbook import OrderBookManager
 
 logger = logging.getLogger("migi.exchange")
 

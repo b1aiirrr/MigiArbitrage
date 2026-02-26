@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from backend.config import (
+from config import (
     TRIANGULAR_ENABLED,
     TRIANGULAR_EXCHANGES,
     TRIANGULAR_PATHS,
@@ -24,7 +24,7 @@ from backend.config import (
     MIN_NET_PROFIT_USD,
     MAX_CAPITAL_USD,
 )
-from backend.orderbook import OrderBookManager
+from orderbook import OrderBookManager
 
 logger = logging.getLogger("migi.triangular")
 

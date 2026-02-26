@@ -14,9 +14,9 @@ import aiohttp
 import orjson
 import websockets.asyncio.client as ws_client
 
-from backend.config import MONITORED_PAIRS
-from backend.orderbook import OrderBookManager
-from backend.exchanges.base import ExchangeClient, WalletStatus
+from config import MONITORED_PAIRS
+from orderbook import OrderBookManager
+from exchanges.base import ExchangeClient, WalletStatus
 
 logger = logging.getLogger("migi.kraken")
 

@@ -14,14 +14,14 @@ from collections import deque
 
 import aiohttp
 
-from backend.config import (
+from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     TELEGRAM_RATE_LIMIT,
     PAYMENT_METHODS,
     ENABLED_EXCHANGES,
 )
-from backend.p2p_assistant import P2PAssistant
+from p2p_assistant import P2PAssistant
 
 logger = logging.getLogger("migi.alerter")
 

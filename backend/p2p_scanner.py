@@ -16,7 +16,7 @@ from typing import Optional
 
 import aiohttp
 
-from backend.config import (
+from config import (
     P2P_ENABLED,
     P2P_FIAT,
     P2P_CRYPTO,

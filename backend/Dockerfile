@@ -39,4 +39,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import asyncio, websockets; asyncio.run(websockets.connect('ws://localhost:8765'))" || exit 1
 
 # Run the scanner
-CMD ["python", "-m", "backend.main"]
+CMD ["python", "main.py"]

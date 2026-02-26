@@ -13,21 +13,19 @@ import signal
 import sys
 import time
 
-sys.path.insert(0, "/app")
-
-from backend.config import (
+from config import (
     SCAN_INTERVAL_MS, ENABLED_EXCHANGES, P2P_ENABLED, TRIANGULAR_ENABLED,
     SIGNALS_ENABLED
 )
-from backend.orderbook import OrderBookManager
-from backend.ccxt_engine import CCXTEngine
-from backend.preflight import PreFlightChecker
-from backend.scanner import ArbitrageScanner
-from backend.p2p_scanner import P2PScanner
-from backend.triangular import TriangularScanner
-from backend.signals import SignalScanner
-from backend.alerter import TelegramAlerter
-from backend.ws_server import DashboardWSServer
+from orderbook import OrderBookManager
+from ccxt_engine import CCXTEngine
+from preflight import PreFlightChecker
+from scanner import ArbitrageScanner
+from p2p_scanner import P2PScanner
+from triangular import TriangularScanner
+from signals import SignalScanner
+from alerter import TelegramAlerter
+from ws_server import DashboardWSServer
 
 # ── Logging ──────────────────────────────────
 logging.basicConfig(

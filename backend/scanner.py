@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from backend.config import (
+from config import (
     SPOT_SYMBOLS,
     EXCHANGE_FEES,
     WITHDRAWAL_FEES,
@@ -22,9 +22,9 @@ from backend.config import (
     MAX_CAPITAL_USD,
     SCAN_INTERVAL_MS,
 )
-from backend.orderbook import OrderBookManager, OrderBook
-from backend.preflight import PreFlightChecker, PreFlightResult
-from backend.alerter import TelegramAlerter
+from orderbook import OrderBookManager, OrderBook
+from preflight import PreFlightChecker, PreFlightResult
+from alerter import TelegramAlerter
 
 logger = logging.getLogger("migi.scanner")
 

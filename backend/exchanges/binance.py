@@ -15,13 +15,13 @@ import orjson
 import websockets
 import websockets.asyncio.client as ws_client
 
-from backend.config import (
+from config import (
     BINANCE_API_KEY,
     BINANCE_API_SECRET,
     MONITORED_PAIRS,
 )
-from backend.orderbook import OrderBookManager
-from backend.exchanges.base import ExchangeClient, WalletStatus
+from orderbook import OrderBookManager
+from exchanges.base import ExchangeClient, WalletStatus
 
 logger = logging.getLogger("migi.binance")
 
