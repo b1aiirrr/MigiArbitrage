@@ -6,16 +6,20 @@ import SpreadGrid from "@/components/SpreadGrid";
 import AlertLog from "@/components/AlertLog";
 import { useArbitrageStream } from "@/hooks/useArbitrageStream";
 
+const EXCHANGES = [
+    "Binance", "OKX", "KuCoin", "MEXC", "Bybit",
+    "Gate.io", "Bitget", "Coinbase",
+];
+
 export default function DashboardPage() {
     const { connected, spreads, history, books, clientCount } =
         useArbitrageStream();
 
-    // Combine live spreads and history for alert log
     const allAlerts = [...spreads, ...history].sort(
         (a, b) => b.timestamp - a.timestamp
     );
 
-    // Compute stats
+    // Stats
     const totalSpreads = allAlerts.length;
     const totalProfit = allAlerts.reduce((sum, s) => sum + s.net_profit, 0);
     const avgSpread =
@@ -25,12 +29,18 @@ export default function DashboardPage() {
     const validBooks = Object.values(books).filter((b: any) => b?.valid).length;
     const totalBooks = Object.keys(books).length;
 
+    // Arb type counts
+    const spotCount = allAlerts.filter((a) => (a.arb_type || "spot") === "spot").length;
+    const p2pCount = allAlerts.filter((a) => a.arb_type === "p2p").length;
+    const triCount = allAlerts.filter((a) => a.arb_type === "triangular").length;
+
     return (
         <div className="app-container">
             {/* ── Header ── */}
             <header className="app-header">
                 <div className="app-header-left">
                     <Logo width={200} height={44} />
+                    <span className="version-badge">v2.0</span>
                 </div>
                 <div className="app-header-right">
                     <div className="connection-status" id="connection-status">
@@ -40,11 +50,8 @@ export default function DashboardPage() {
                         />
                         <span>{connected ? "Live" : "Disconnected"}</span>
                     </div>
-                    <span
-                        className="badge badge-info"
-                        style={{ fontSize: "0.7rem" }}
-                    >
-                        🔒 Alert-Only Mode
+                    <span className="badge badge-info" style={{ fontSize: "0.7rem" }}>
+                        🔒 Semi-Auto Mode
                     </span>
                 </div>
             </header>
@@ -55,21 +62,19 @@ export default function DashboardPage() {
                     <span className="stat-label">Active Order Books</span>
                     <span className="stat-value stat-value-accent">
                         {validBooks}
-                        <span
-                            style={{
-                                fontSize: "0.8rem",
-                                color: "var(--color-text-muted)",
-                                fontWeight: 400,
-                            }}
-                        >
-                            {" "}
-                            / {totalBooks || "—"}
+                        <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", fontWeight: 400 }}>
+                            {" "} / {totalBooks || "—"}
                         </span>
                     </span>
                 </div>
                 <div className="glass-card stat-card" id="stat-spreads-found">
                     <span className="stat-label">Spreads Detected</span>
-                    <span className="stat-value stat-value-accent">{totalSpreads}</span>
+                    <span className="stat-value stat-value-accent">
+                        {totalSpreads}
+                        <span style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", fontWeight: 400, marginLeft: 6 }}>
+                            S:{spotCount} P:{p2pCount} T:{triCount}
+                        </span>
+                    </span>
                 </div>
                 <div className="glass-card stat-card" id="stat-total-profit">
                     <span className="stat-label">Total Est. Profit</span>
@@ -103,12 +108,12 @@ export default function DashboardPage() {
                 }}
             >
                 <p>
-                    MigiArbitrage — Real-Time Crypto Arbitrage Scanner •{" "}
-                    <span style={{ color: "var(--color-warning)" }}>⚠ Alert-only mode</span> — No
-                    trades are executed
+                    MigiArbitrage v2.0 — Real-Time Crypto Arbitrage Scanner •{" "}
+                    <span style={{ color: "var(--color-warning)" }}>⚠ Semi-auto mode</span> —
+                    Manual payment required for P2P
                 </p>
                 <p style={{ marginTop: "var(--space-xs)", opacity: 0.6 }}>
-                    Monitoring Binance · Kraken · KuCoin •{" "}
+                    Monitoring {EXCHANGES.join(" · ")} •{" "}
                     {clientCount > 0 && `${clientCount} client${clientCount > 1 ? "s" : ""} connected`}
                 </p>
             </footer>

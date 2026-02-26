@@ -1,9 +1,8 @@
 """
-MigiArbitrage — Arbitrage Scanner
-==================================
-Core scanning engine that compares order books across exchanges,
-calculates true net profit including all fees, and triggers
-pre-flight checks + alerts on profitable spreads.
+MigiArbitrage v2.0 — Arbitrage Scanner
+========================================
+Core spot scanning engine using unified CCXT engine.
+Adds arb_type field for frontend filtering.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from backend.config import (
-    MONITORED_PAIRS,
+    SPOT_SYMBOLS,
     EXCHANGE_FEES,
     WITHDRAWAL_FEES,
     PREFERRED_NETWORKS,
@@ -28,14 +27,13 @@ from backend.alerter import TelegramAlerter
 
 logger = logging.getLogger("migi.scanner")
 
-EXCHANGES = ["binance", "kraken", "kucoin"]
-
 
 @dataclass
 class SpreadOpportunity:
-    """Detected arbitrage spread before and after fee deductions."""
+    """Detected spot arbitrage spread."""
     __slots__ = [
-        "pair", "base", "quote", "buy_exchange", "sell_exchange",
+        "pair", "base", "quote", "arb_type",
+        "buy_exchange", "sell_exchange",
         "ask_price", "bid_price", "raw_spread_pct", "volume",
         "fee_maker", "fee_taker", "fee_withdrawal", "fee_network",
         "net_profit", "preflight", "timestamp",
@@ -44,6 +42,7 @@ class SpreadOpportunity:
     pair: str
     base: str
     quote: str
+    arb_type: str
     buy_exchange: str
     sell_exchange: str
     ask_price: float
@@ -63,6 +62,7 @@ class SpreadOpportunity:
             "pair": self.pair,
             "base": self.base,
             "quote": self.quote,
+            "arb_type": self.arb_type,
             "buy_exchange": self.buy_exchange,
             "sell_exchange": self.sell_exchange,
             "ask_price": round(self.ask_price, 8),
@@ -75,24 +75,17 @@ class SpreadOpportunity:
             "fee_network": round(self.fee_network, 8),
             "net_profit": round(self.net_profit, 4),
             "preflight": self.preflight.to_dict() if self.preflight else None,
+            "payment_method": "",
+            "payment_label": "",
+            "risk_level": self.preflight.risk_level if self.preflight else "low",
             "timestamp": self.timestamp,
         }
 
 
 class ArbitrageScanner:
     """
-    Continuously scans all exchange pair combinations for arbitrage.
-
-    Net Profit = (P_bid × V) - (P_ask × V) - F_maker - F_taker - F_withdrawal - F_network
-
-    Where:
-    - P_bid = highest bid on the sell exchange
-    - P_ask = lowest ask on the buy exchange
-    - V = executable volume (min of available depth on both sides)
-    - F_maker = maker fee on the buy exchange
-    - F_taker = taker fee on the sell exchange
-    - F_withdrawal = exchange withdrawal fee
-    - F_network = blockchain network fee (estimated from withdrawal fees)
+    Scans all exchange pair combinations for spot ↔ spot arbitrage.
+    Uses exchange IDs from CCXT engine.
     """
 
     def __init__(
@@ -100,24 +93,24 @@ class ArbitrageScanner:
         book_manager: OrderBookManager,
         preflight: PreFlightChecker,
         alerter: TelegramAlerter,
-        on_spread: Optional[callable] = None,
+        exchange_ids: list[str] = None,
+        on_spread=None,
     ) -> None:
         self.book_manager = book_manager
         self.preflight = preflight
         self.alerter = alerter
-        self.on_spread = on_spread  # Callback for WS server broadcast
+        self.exchange_ids = exchange_ids or []
+        self.on_spread = on_spread
         self._running = True
         self._scan_count = 0
         self._opportunity_count = 0
 
     async def run(self) -> None:
-        """Main scan loop — runs at configured interval."""
         interval = SCAN_INTERVAL_MS / 1000.0
+        combos = len(list(itertools.combinations(self.exchange_ids, 2)))
         logger.info(
-            "Scanner started — %d pairs × %d exchange combos, interval=%.1fs",
-            len(MONITORED_PAIRS),
-            len(list(itertools.combinations(EXCHANGES, 2))),
-            interval,
+            "Spot scanner started — %d symbols × %d exchange combos (interval=%.1fs)",
+            len(SPOT_SYMBOLS), combos, interval,
         )
 
         while self._running:
@@ -126,100 +119,64 @@ class ArbitrageScanner:
                 self._scan_count += 1
             except Exception as exc:
                 logger.error("Scan error: %s", exc, exc_info=True)
-
             await asyncio.sleep(interval)
 
     async def _scan_all(self) -> None:
-        """Scan all pairs across all exchange combinations."""
-        for pair_cfg in MONITORED_PAIRS:
-            normalized = f"{pair_cfg['base']}/{pair_cfg['quote']}"
-
-            # Get all valid books for this pair
-            books = self.book_manager.all_books_for_symbol(normalized)
+        for symbol in SPOT_SYMBOLS:
+            books = self.book_manager.all_books_for_symbol(symbol)
             if len(books) < 2:
                 continue
-
-            # Compare every pair of exchanges
             for book_a, book_b in itertools.combinations(books, 2):
-                # Direction 1: Buy on A, sell on B
-                await self._evaluate_spread(pair_cfg, book_a, book_b)
-                # Direction 2: Buy on B, sell on A
-                await self._evaluate_spread(pair_cfg, book_b, book_a)
+                await self._evaluate_spread(symbol, book_a, book_b)
+                await self._evaluate_spread(symbol, book_b, book_a)
 
     async def _evaluate_spread(
-        self,
-        pair_cfg: dict,
-        buy_book: OrderBook,
-        sell_book: OrderBook,
+        self, symbol: str, buy_book: OrderBook, sell_book: OrderBook
     ) -> None:
-        """
-        Evaluate a single directional spread between two exchanges.
-        Buy on buy_book.exchange, sell on sell_book.exchange.
-        """
         ask = buy_book.best_ask()
         bid = sell_book.best_bid()
-
-        if not ask or not bid:
+        if not ask or not bid or ask.price >= bid.price:
             return
 
-        # No arbitrage if ask >= bid
-        if ask.price >= bid.price:
-            return
-
-        # ── Calculate executable volume ──
-        # Volume is the minimum of what we can buy and sell
         buy_volume = buy_book.executable_volume("ask", ask.price)
         sell_volume = sell_book.executable_volume("bid", bid.price)
         volume = min(buy_volume, sell_volume)
-
         if volume <= 0:
             return
 
-        # ── Calculate all fees ──
-        base = pair_cfg["base"]
+        base = symbol.split("/")[0]
+        quote = symbol.split("/")[1]
         buy_ex = buy_book.exchange
         sell_ex = sell_book.exchange
 
-        # Fee on the buy side (taker - we're lifting the ask)
         fee_taker = ask.price * volume * EXCHANGE_FEES.get(buy_ex, {}).get("taker", 0.001)
-
-        # Fee on the sell side (maker - we're hitting the bid)
         fee_maker = bid.price * volume * EXCHANGE_FEES.get(sell_ex, {}).get("maker", 0.001)
 
-        # Withdrawal fee (to move asset from buy exchange to sell exchange)
         network = PREFERRED_NETWORKS.get(base, base)
         fee_withdrawal_units = WITHDRAWAL_FEES.get(base, {}).get(network, 0.0)
-        fee_withdrawal = fee_withdrawal_units * ask.price  # Convert to quote currency
+        fee_withdrawal = fee_withdrawal_units * ask.price
+        fee_network = 0.0
 
-        # Network fee (already included in withdrawal fee for most exchanges)
-        fee_network = 0.0  # Subsumed into withdrawal fee
-
-        # ── Net Profit Formula ──
         gross = (bid.price * volume) - (ask.price * volume)
         net_profit = gross - fee_maker - fee_taker - fee_withdrawal - fee_network
 
         if net_profit < MIN_NET_PROFIT_USD:
             return
 
-        # ── Raw spread percentage ──
         raw_spread_pct = ((bid.price - ask.price) / ask.price) * 100
 
-        normalized = f"{pair_cfg['base']}/{pair_cfg['quote']}"
-
         logger.info(
-            "💰 Spread found: %s | Buy %s@%.4f → Sell %s@%.4f | "
-            "Vol=%.6f | Net=$%.2f | Spread=%.3f%%",
-            normalized, buy_ex, ask.price, sell_ex, bid.price,
-            volume, net_profit, raw_spread_pct,
+            "💰 Spot spread: %s | Buy %s@%.4f → Sell %s@%.4f | Net=$%.2f",
+            symbol, buy_ex, ask.price, sell_ex, bid.price, net_profit,
         )
 
-        # ── Pre-flight check (ghost spread prevention) ──
         preflight_result = await self.preflight.check(base, buy_ex, sell_ex)
 
         opportunity = SpreadOpportunity(
-            pair=normalized,
+            pair=symbol,
             base=base,
-            quote=pair_cfg["quote"],
+            quote=quote,
+            arb_type="spot",
             buy_exchange=buy_ex,
             sell_exchange=sell_ex,
             ask_price=ask.price,
@@ -235,19 +192,12 @@ class ArbitrageScanner:
             timestamp=time.time(),
         )
 
-        # Broadcast to WebSocket clients
         if self.on_spread:
             await self.on_spread(opportunity)
 
-        # Send Telegram alert
         if preflight_result.passed:
             await self.alerter.send_opportunity(opportunity)
         else:
-            logger.warning(
-                "⚠️ Spread failed pre-flight: %s",
-                ", ".join(preflight_result.risk_notes),
-            )
-            # Still alert but with warning flag
             await self.alerter.send_opportunity(opportunity, warning=True)
 
         self._opportunity_count += 1
@@ -257,7 +207,4 @@ class ArbitrageScanner:
 
     @property
     def stats(self) -> dict:
-        return {
-            "scans": self._scan_count,
-            "opportunities": self._opportunity_count,
-        }
+        return {"scans": self._scan_count, "opportunities": self._opportunity_count}

@@ -66,7 +66,9 @@
 }
 
 /* ── Reset ─────────────────────────────────────── */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -166,8 +168,15 @@ body::before {
 
 /* ── Pulse Animation ───────────────────────────── */
 @keyframes pulse-glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes slide-in {
@@ -175,6 +184,7 @@ body::before {
     opacity: 0;
     transform: translateY(8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -182,8 +192,13 @@ body::before {
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 .animate-pulse-glow {
@@ -411,6 +426,214 @@ body::before {
 
 .empty-state-desc {
   font-size: 0.85rem;
+}
+
+/* ── Card Title ────────────────────────────────── */
+.card-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* ── Spread Grid Header ───────────────────────── */
+.spread-grid-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ── Filter Bar ───────────────────────────────── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.filter-btn {
+  padding: 4px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.filter-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.filter-btn-active {
+  background: var(--color-accent-dim);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.15);
+}
+
+/* ── Sort Select ──────────────────────────────── */
+.sort-select {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.sort-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable:hover {
+  color: var(--color-accent) !important;
+}
+
+/* ── Arb Type Badges ──────────────────────────── */
+.badge-spot {
+  background: rgba(66, 165, 245, 0.12);
+  color: #42a5f5;
+  border: 1px solid rgba(66, 165, 245, 0.25);
+}
+
+.badge-p2p {
+  background: rgba(255, 171, 64, 0.12);
+  color: #ffab40;
+  border: 1px solid rgba(255, 171, 64, 0.25);
+}
+
+.badge-triangular {
+  background: rgba(171, 71, 188, 0.12);
+  color: #ce93d8;
+  border: 1px solid rgba(171, 71, 188, 0.25);
+}
+
+/* ── Risk Badges ──────────────────────────────── */
+.badge-low-risk {
+  background: rgba(0, 230, 118, 0.1);
+  color: var(--color-profit);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+  font-size: 0.65rem;
+}
+
+.badge-med-risk {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid rgba(255, 171, 64, 0.2);
+  font-size: 0.65rem;
+}
+
+.badge-high-risk {
+  background: var(--color-loss-bg);
+  color: var(--color-loss);
+  border: 1px solid rgba(255, 82, 82, 0.2);
+  font-size: 0.65rem;
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ── Payment Badge ────────────────────────────── */
+.payment-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--color-text-secondary);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+/* ── Exchange Tag ─────────────────────────────── */
+.exchange-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--color-accent);
+  opacity: 0.8;
+}
+
+.cell-price {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--color-text-primary);
+}
+
+.cell-spread {
+  color: var(--color-accent);
+}
+
+.cell-time {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.profit-kes {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* ── Version Badge ────────────────────────────── */
+.version-badge {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(0, 124, 240, 0.15));
+  color: var(--color-accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border: 1px solid rgba(0, 240, 255, 0.2);
+}
+
+/* ── Row Animation ────────────────────────────── */
+.fade-in-row {
+  animation: slide-in 0.3s ease-out;
+}
+
+/* ── Table Wrapper ────────────────────────────── */
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Empty State (v2) ─────────────────────────── */
+.empty-icon {
+  display: block;
+  font-size: 2.5rem;
+  margin-bottom: var(--space-md);
+  opacity: 0.4;
+}
+
+.empty-sub {
+  font-size: 0.8rem;
+  margin-top: var(--space-xs);
+  opacity: 0.6;
 }
 
 /* ── Responsive ────────────────────────────────── */

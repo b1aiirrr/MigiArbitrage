@@ -1,11 +1,8 @@
 """
-MigiArbitrage — Main Orchestrator
-===================================
-Entry point that starts all exchange WebSocket connections,
-the arbitrage scanner, dashboard WS server, and coordinates
-graceful shutdown. Includes aggressive GC for 2GB RAM servers.
-
-⚠️ ALERT-ONLY MODE — No trade execution code exists in this system.
+MigiArbitrage v2.0 — Main Orchestrator
+========================================
+Starts CCXT engine, spot scanner, P2P scanner, triangular scanner,
+dashboard WS server, and memory watchdog. Coordinates graceful shutdown.
 """
 
 from __future__ import annotations
@@ -16,16 +13,15 @@ import signal
 import sys
 import time
 
-# Ensure the parent directory is in the path for imports
 sys.path.insert(0, "/app")
 
-from backend.config import SCAN_INTERVAL_MS, MONITORED_PAIRS
+from backend.config import SCAN_INTERVAL_MS, ENABLED_EXCHANGES, P2P_ENABLED, TRIANGULAR_ENABLED
 from backend.orderbook import OrderBookManager
-from backend.exchanges.binance import BinanceClient
-from backend.exchanges.kraken import KrakenClient
-from backend.exchanges.kucoin import KuCoinClient
+from backend.ccxt_engine import CCXTEngine
 from backend.preflight import PreFlightChecker
 from backend.scanner import ArbitrageScanner
+from backend.p2p_scanner import P2PScanner
+from backend.triangular import TriangularScanner
 from backend.alerter import TelegramAlerter
 from backend.ws_server import DashboardWSServer
 
@@ -37,13 +33,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("migi.main")
 
-# Silence noisy library logs
 logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
+logging.getLogger("ccxt").setLevel(logging.WARNING)
 
 
 async def periodic_gc(interval: float = 30.0) -> None:
-    """Periodically force garbage collection to keep memory low."""
+    """Periodically force garbage collection."""
     while True:
         await asyncio.sleep(interval)
         collected = gc.collect()
@@ -54,56 +50,53 @@ async def periodic_gc(interval: float = 30.0) -> None:
 async def periodic_status(
     book_manager: OrderBookManager,
     scanner: ArbitrageScanner,
+    p2p_scanner: P2PScanner,
+    tri_scanner: TriangularScanner,
     ws_server: DashboardWSServer,
+    ccxt_engine: CCXTEngine,
     interval: float = 60.0,
 ) -> None:
-    """Log system status periodically and broadcast book summaries."""
+    """Log system status periodically."""
     while True:
         await asyncio.sleep(interval)
-        stats = scanner.stats
+
+        spot = scanner.stats
+        p2p = p2p_scanner.stats
+        tri = tri_scanner.stats
         books = book_manager.stats()
         valid_books = sum(1 for b in books.values() if b["valid"])
 
         logger.info(
-            "📊 Status: scans=%d | opportunities=%d | books=%d/%d valid | ws_clients=%d",
-            stats["scans"],
-            stats["opportunities"],
-            valid_books,
-            len(books),
+            "📊 Status: spot_scans=%d spot_ops=%d | p2p_scans=%d p2p_ops=%d | "
+            "tri_scans=%d tri_ops=%d | books=%d/%d | ws=%d | exchanges=%d",
+            spot["scans"], spot["opportunities"],
+            p2p["p2p_scans"], p2p["p2p_opportunities"],
+            tri["triangular_scans"], tri["triangular_opportunities"],
+            valid_books, len(books),
             ws_server.client_count,
+            len(ccxt_engine.connected_exchanges),
         )
 
-        # Broadcast book summary to frontend
         await ws_server.broadcast_books(books)
 
 
 async def main() -> None:
     """Main application entry point."""
     logger.info("=" * 60)
-    logger.info("  MigiArbitrage — Real-Time Arbitrage Scanner")
-    logger.info("  ⚠️  ALERT-ONLY MODE — No trades will be executed")
+    logger.info("  MigiArbitrage v2.0 — Real-Time Arbitrage Scanner")
+    logger.info("  ⚠️  ALERT-ONLY + SEMI-AUTO MODE")
     logger.info("=" * 60)
-    logger.info(
-        "Monitoring %d pairs across 3 exchanges (Binance, Kraken, KuCoin)",
-        len(MONITORED_PAIRS),
-    )
+    logger.info("Exchanges: %s", ", ".join(ENABLED_EXCHANGES))
 
     # ── Initialize components ──
     book_manager = OrderBookManager(max_depth=20)
 
-    # Exchange clients
-    binance = BinanceClient(book_manager)
-    kraken = KrakenClient(book_manager)
-    kucoin = KuCoinClient(book_manager)
+    # CCXT Engine (replaces individual exchange clients)
+    ccxt_engine = CCXTEngine(book_manager)
+    await ccxt_engine.initialize()
 
-    exchange_clients = {
-        "binance": binance,
-        "kraken": kraken,
-        "kucoin": kucoin,
-    }
-
-    # Pre-flight checker
-    preflight = PreFlightChecker(exchange_clients)
+    # Pre-flight checker (uses CCXT for wallet status)
+    preflight = PreFlightChecker(ccxt_engine=ccxt_engine)
 
     # Telegram alerter
     alerter = TelegramAlerter()
@@ -111,15 +104,33 @@ async def main() -> None:
     # Dashboard WebSocket server
     ws_server = DashboardWSServer()
 
-    # Scanner with broadcast callback
-    async def on_spread(opportunity):
-        await ws_server.broadcast_spread(opportunity.to_dict())
+    # Spot scanner
+    async def on_spot_spread(opportunity):
+        await ws_server.broadcast_spread(opportunity)
 
     scanner = ArbitrageScanner(
         book_manager=book_manager,
         preflight=preflight,
         alerter=alerter,
-        on_spread=on_spread,
+        exchange_ids=ccxt_engine.exchange_ids,
+        on_spread=on_spot_spread,
+    )
+
+    # P2P scanner
+    async def on_p2p_spread(opp_dict):
+        await ws_server.broadcast_spread(opp_dict)
+        await alerter.send_any_opportunity(opp_dict)
+
+    p2p_scanner = P2PScanner(on_spread=on_p2p_spread)
+
+    # Triangular scanner
+    async def on_tri_spread(opp_dict):
+        await ws_server.broadcast_spread(opp_dict)
+        await alerter.send_any_opportunity(opp_dict)
+
+    tri_scanner = TriangularScanner(
+        book_manager=book_manager,
+        on_spread=on_tri_spread,
     )
 
     # ── Start all tasks ──
@@ -127,23 +138,32 @@ async def main() -> None:
     await alerter.send_startup_message()
 
     tasks = [
-        asyncio.create_task(binance.run_forever(), name="binance-ws"),
-        asyncio.create_task(kraken.run_forever(), name="kraken-ws"),
-        asyncio.create_task(kucoin.run_forever(), name="kucoin-ws"),
-        asyncio.create_task(scanner.run(), name="scanner"),
+        asyncio.create_task(ccxt_engine.run(), name="ccxt-engine"),
+        asyncio.create_task(scanner.run(), name="spot-scanner"),
         asyncio.create_task(periodic_gc(), name="gc"),
         asyncio.create_task(
-            periodic_status(book_manager, scanner, ws_server),
+            periodic_status(
+                book_manager, scanner, p2p_scanner, tri_scanner,
+                ws_server, ccxt_engine,
+            ),
             name="status",
         ),
     ]
 
-    logger.info("All tasks started — scanner running every %dms", SCAN_INTERVAL_MS)
+    if P2P_ENABLED:
+        tasks.append(asyncio.create_task(p2p_scanner.run(), name="p2p-scanner"))
+        logger.info("P2P scanner enabled — KES/USDT monitoring active")
+
+    if TRIANGULAR_ENABLED:
+        tasks.append(asyncio.create_task(tri_scanner.run(), name="tri-scanner"))
+        logger.info("Triangular scanner enabled")
+
+    logger.info("All %d tasks started — scanner running every %dms", len(tasks), SCAN_INTERVAL_MS)
 
     # ── Graceful shutdown ──
     shutdown_event = asyncio.Event()
 
-    def signal_handler() -> None:
+    def signal_handler():
         logger.info("Shutdown signal received...")
         shutdown_event.set()
 
@@ -152,7 +172,6 @@ async def main() -> None:
         try:
             loop.add_signal_handler(sig, signal_handler)
         except NotImplementedError:
-            # Windows doesn't support add_signal_handler
             pass
 
     try:
@@ -162,16 +181,15 @@ async def main() -> None:
 
     logger.info("Shutting down...")
 
-    # Stop components
     scanner.stop()
-    binance.stop()
-    kraken.stop()
-    kucoin.stop()
+    p2p_scanner.stop()
+    tri_scanner.stop()
 
     for task in tasks:
         task.cancel()
 
     await asyncio.gather(*tasks, return_exceptions=True)
+    await ccxt_engine.close()
     await ws_server.stop()
 
     logger.info("Shutdown complete.")

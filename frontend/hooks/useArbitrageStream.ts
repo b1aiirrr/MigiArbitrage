@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8765";
 
 export interface SpreadData {
     pair: string;
+    arb_type?: string;
     base: string;
     quote: string;
     buy_exchange: string;
@@ -17,25 +20,26 @@ export interface SpreadData {
     fee_withdrawal: number;
     fee_network: number;
     net_profit: number;
-    preflight: {
+    net_profit_kes?: number;
+    payment_method?: string;
+    payment_label?: string;
+    risk_level?: string;
+    margin_pct?: number;
+    transfer_time_est?: string;
+    advertiser?: string;
+    advertiser_rate?: number;
+    advertiser_trades?: number;
+    preflight?: {
         passed: boolean;
-        network: string;
-        withdrawal_fee: number;
         risk_level: string;
+        network: string;
         risk_notes: string[];
-        buy_wallet: any;
-        sell_wallet: any;
-    } | null;
+    };
+    triangular_steps?: { pair: string; side: string; price: number }[];
     timestamp: number;
 }
 
-export interface WSMessage {
-    type: "spread" | "history" | "books" | "status" | "pong";
-    data: any;
-    timestamp: number;
-}
-
-interface UseArbitrageStreamReturn {
+interface StreamState {
     connected: boolean;
     spreads: SpreadData[];
     history: SpreadData[];
@@ -43,14 +47,7 @@ interface UseArbitrageStreamReturn {
     clientCount: number;
 }
 
-const MAX_LIVE_SPREADS = 50;
-const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 30000]; // Exponential backoff
-
-/**
- * Custom hook to connect to the MigiArbitrage backend WebSocket server.
- * Handles auto-reconnection with exponential backoff.
- */
-export function useArbitrageStream(): UseArbitrageStreamReturn {
+export function useArbitrageStream(): StreamState {
     const [connected, setConnected] = useState(false);
     const [spreads, setSpreads] = useState<SpreadData[]>([]);
     const [history, setHistory] = useState<SpreadData[]>([]);
@@ -58,45 +55,41 @@ export function useArbitrageStream(): UseArbitrageStreamReturn {
     const [clientCount, setClientCount] = useState(0);
 
     const wsRef = useRef<WebSocket | null>(null);
-    const reconnectAttempt = useRef(0);
-    const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
-
-    const wsUrl =
-        typeof window !== "undefined"
-            ? process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8765"
-            : "";
+    const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const reconnectAttempts = useRef(0);
+    const maxReconnectDelay = 30000;
 
     const connect = useCallback(() => {
-        if (!wsUrl) return;
+        if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
         try {
-            const ws = new WebSocket(wsUrl);
+            const ws = new WebSocket(WS_URL);
             wsRef.current = ws;
 
             ws.onopen = () => {
                 setConnected(true);
-                reconnectAttempt.current = 0;
-                console.log("[MigiArbitrage] WebSocket connected");
+                reconnectAttempts.current = 0;
+                console.log("[WS] Connected to", WS_URL);
             };
 
             ws.onmessage = (event) => {
                 try {
-                    const msg: WSMessage = JSON.parse(event.data);
+                    const msg = JSON.parse(event.data);
 
                     switch (msg.type) {
                         case "spread":
                             setSpreads((prev) => {
-                                const next = [msg.data as SpreadData, ...prev];
-                                return next.slice(0, MAX_LIVE_SPREADS);
+                                const next = [msg.data, ...prev];
+                                return next.slice(0, 200);
                             });
                             break;
 
                         case "history":
-                            setHistory(msg.data as SpreadData[]);
+                            setHistory(Array.isArray(msg.data) ? msg.data : []);
                             break;
 
                         case "books":
-                            setBooks(msg.data as Record<string, any>);
+                            setBooks(msg.data || {});
                             break;
 
                         case "status":
@@ -106,34 +99,30 @@ export function useArbitrageStream(): UseArbitrageStreamReturn {
                         case "pong":
                             break;
                     }
-                } catch (err) {
-                    console.warn("[MigiArbitrage] Parse error:", err);
+                } catch (e) {
+                    console.error("[WS] Parse error:", e);
                 }
             };
 
             ws.onclose = () => {
                 setConnected(false);
-                wsRef.current = null;
-                console.log("[MigiArbitrage] WebSocket disconnected — reconnecting...");
                 scheduleReconnect();
             };
 
             ws.onerror = (err) => {
-                console.error("[MigiArbitrage] WebSocket error:", err);
+                console.error("[WS] Error:", err);
                 ws.close();
             };
         } catch (err) {
-            console.error("[MigiArbitrage] Connection failed:", err);
+            console.error("[WS] Connection failed:", err);
             scheduleReconnect();
         }
-    }, [wsUrl]);
+    }, []);
 
     const scheduleReconnect = useCallback(() => {
-        const delay =
-            RECONNECT_DELAYS[
-            Math.min(reconnectAttempt.current, RECONNECT_DELAYS.length - 1)
-            ];
-        reconnectAttempt.current++;
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), maxReconnectDelay);
+        reconnectAttempts.current += 1;
+        console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`);
 
         reconnectTimer.current = setTimeout(() => {
             connect();
@@ -143,17 +132,17 @@ export function useArbitrageStream(): UseArbitrageStreamReturn {
     useEffect(() => {
         connect();
 
-        // Ping interval to keep connection alive
-        const pingInterval = setInterval(() => {
+        // Heartbeat
+        const heartbeat = setInterval(() => {
             if (wsRef.current?.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({ type: "ping" }));
             }
-        }, 30000);
+        }, 25000);
 
         return () => {
-            clearInterval(pingInterval);
+            clearInterval(heartbeat);
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-            if (wsRef.current) wsRef.current.close();
+            wsRef.current?.close();
         };
     }, [connect]);
 
