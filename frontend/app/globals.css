@@ -636,6 +636,113 @@ body::before {
   opacity: 0.6;
 }
 
+/* ── Footer ───────────────────────────────────── */
+.app-footer {
+  margin-top: var(--space-2xl);
+  padding: var(--space-2xl) 0 var(--space-lg);
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.footer-exchanges {
+  margin-bottom: var(--space-lg);
+}
+
+.footer-exchanges-label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.footer-exchange-grid {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.footer-exchange-chip {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: all var(--transition-fast);
+}
+
+.footer-exchange-chip:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  box-shadow: 0 0 6px rgba(0, 240, 255, 0.1);
+}
+
+.footer-divider {
+  width: 60px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border-accent), transparent);
+  margin: var(--space-lg) auto;
+}
+
+.footer-legal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.footer-logo-text {
+  font-size: 0.9rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--color-accent), #007cf0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.footer-flag {
+  font-size: 1rem;
+}
+
+.footer-tagline {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.footer-disclaimer {
+  font-size: 0.7rem;
+  color: var(--color-warning);
+  opacity: 0.7;
+  max-width: 500px;
+  margin: 0 auto;
+  line-height: 1.4;
+}
+
+.footer-copyright {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}
+
+.footer-clients {
+  color: var(--color-accent);
+  opacity: 1;
+}
+
 /* ── Responsive ────────────────────────────────── */
 @media (max-width: 768px) {
   .app-container {

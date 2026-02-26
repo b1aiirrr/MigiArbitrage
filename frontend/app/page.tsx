@@ -97,25 +97,34 @@ export default function DashboardPage() {
             <AlertLog alerts={allAlerts.slice(0, 100)} />
 
             {/* ── Footer ── */}
-            <footer
-                style={{
-                    textAlign: "center",
-                    padding: "var(--space-2xl) 0 var(--space-lg)",
-                    color: "var(--color-text-muted)",
-                    fontSize: "0.75rem",
-                    borderTop: "1px solid var(--color-border)",
-                    marginTop: "var(--space-2xl)",
-                }}
-            >
-                <p>
-                    MigiArbitrage v2.0 — Real-Time Crypto Arbitrage Scanner •{" "}
-                    <span style={{ color: "var(--color-warning)" }}>⚠ Semi-auto mode</span> —
-                    Manual payment required for P2P
-                </p>
-                <p style={{ marginTop: "var(--space-xs)", opacity: 0.6 }}>
-                    Monitoring {EXCHANGES.join(" · ")} •{" "}
-                    {clientCount > 0 && `${clientCount} client${clientCount > 1 ? "s" : ""} connected`}
-                </p>
+            <footer className="app-footer">
+                <div className="footer-exchanges">
+                    <span className="footer-exchanges-label">Exchanges Covered</span>
+                    <div className="footer-exchange-grid">
+                        {EXCHANGES.map((ex) => (
+                            <span key={ex} className="footer-exchange-chip">{ex}</span>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="footer-divider" />
+
+                <div className="footer-legal">
+                    <p className="footer-brand">
+                        <span className="footer-logo-text">MigiArbitrage</span>
+                        <span className="footer-flag">🇰🇪</span>
+                        <span className="footer-tagline">Real-Time Crypto Arbitrage Intelligence · Nairobi, Kenya</span>
+                    </p>
+                    <p className="footer-disclaimer">
+                        ⚠ Semi-automated mode — manual payment confirmation required for P2P trades. No funds are moved without user action.
+                    </p>
+                    <p className="footer-copyright">
+                        © {new Date().getFullYear()} MigiArbitrage. All rights reserved.
+                        {clientCount > 0 && (
+                            <span className="footer-clients"> · {clientCount} active client{clientCount > 1 ? "s" : ""}</span>
+                        )}
+                    </p>
+                </div>
             </footer>
         </div>
     );
