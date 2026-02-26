@@ -684,6 +684,45 @@ body::before {
   box-shadow: 0 0 6px rgba(0, 240, 255, 0.1);
 }
 
+/* ── Exchange Logo Grid ──────────────────────── */
+.exchange-logos-grid {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  padding: var(--space-sm) 0;
+}
+
+.exchange-logo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.exchange-logo-card:hover {
+  transform: translateY(-2px);
+}
+
+.exchange-logo-card:hover .exchange-logo-svg {
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+.exchange-logo-name {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
+}
+
+.exchange-logo-card:hover .exchange-logo-name {
+  opacity: 1;
+}
+
 .footer-divider {
   width: 60px;
   height: 1px;

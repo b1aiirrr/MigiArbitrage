@@ -4,12 +4,10 @@ import React from "react";
 import Logo from "@/components/Logo";
 import SpreadGrid from "@/components/SpreadGrid";
 import AlertLog from "@/components/AlertLog";
+import ExchangeLogos from "@/components/ExchangeLogos";
 import { useArbitrageStream } from "@/hooks/useArbitrageStream";
 
-const EXCHANGES = [
-    "Binance", "OKX", "KuCoin", "MEXC", "Bybit",
-    "Gate.io", "Bitget", "Coinbase",
-];
+
 
 export default function DashboardPage() {
     const { connected, spreads, history, books, clientCount } =
@@ -100,11 +98,7 @@ export default function DashboardPage() {
             <footer className="app-footer">
                 <div className="footer-exchanges">
                     <span className="footer-exchanges-label">Exchanges Covered</span>
-                    <div className="footer-exchange-grid">
-                        {EXCHANGES.map((ex) => (
-                            <span key={ex} className="footer-exchange-chip">{ex}</span>
-                        ))}
-                    </div>
+                    <ExchangeLogos />
                 </div>
 
                 <div className="footer-divider" />
