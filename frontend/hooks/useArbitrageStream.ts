@@ -36,6 +36,9 @@ export interface SpreadData {
         risk_notes: string[];
     };
     triangular_steps?: { pair: string; side: string; price: number }[];
+    action?: string;
+    indicator?: string;
+    type?: string;
     timestamp: number;
 }
 

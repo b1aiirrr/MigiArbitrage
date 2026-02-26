@@ -28,9 +28,10 @@ export default function DashboardPage() {
     const totalBooks = Object.keys(books).length;
 
     // Arb type counts
-    const spotCount = allAlerts.filter((a) => (a.arb_type || "spot") === "spot").length;
+    const spotCount = allAlerts.filter((a) => (a.arb_type || "spot") === "spot" && a.type !== "SIGNAL").length;
     const p2pCount = allAlerts.filter((a) => a.arb_type === "p2p").length;
     const triCount = allAlerts.filter((a) => a.arb_type === "triangular").length;
+    const signalCount = allAlerts.filter((a) => a.type === "SIGNAL").length;
 
     return (
         <div className="app-container">
@@ -70,7 +71,7 @@ export default function DashboardPage() {
                     <span className="stat-value stat-value-accent">
                         {totalSpreads}
                         <span style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", fontWeight: 400, marginLeft: 6 }}>
-                            S:{spotCount} P:{p2pCount} T:{triCount}
+                            S:{spotCount} P:{p2pCount} T:{triCount} <span style={{ color: "var(--color-accent)" }}>Sig:{signalCount}</span>
                         </span>
                     </span>
                 </div>

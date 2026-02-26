@@ -255,6 +255,13 @@ SCAN_INTERVAL_MS: int = int(os.getenv("SCAN_INTERVAL_MS", "500"))
 ORDER_BOOK_DEPTH: int = 20
 
 # ──────────────────────────────────────────────
+# Signals Configuration
+# ──────────────────────────────────────────────
+SIGNALS_ENABLED: bool = os.getenv("SIGNALS_ENABLED", "True").lower() == "true"
+SIGNALS_POLL_INTERVAL: int = int(os.getenv("SIGNALS_POLL_INTERVAL", "60"))
+SIGNAL_SYMBOLS: list[str] = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+
+# ──────────────────────────────────────────────
 #  Network Congestion Thresholds (seconds)
 # ──────────────────────────────────────────────
 NETWORK_CONGESTION_WARN_SECS: int = 600

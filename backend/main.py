@@ -15,13 +15,17 @@ import time
 
 sys.path.insert(0, "/app")
 
-from backend.config import SCAN_INTERVAL_MS, ENABLED_EXCHANGES, P2P_ENABLED, TRIANGULAR_ENABLED
+from backend.config import (
+    SCAN_INTERVAL_MS, ENABLED_EXCHANGES, P2P_ENABLED, TRIANGULAR_ENABLED,
+    SIGNALS_ENABLED
+)
 from backend.orderbook import OrderBookManager
 from backend.ccxt_engine import CCXTEngine
 from backend.preflight import PreFlightChecker
 from backend.scanner import ArbitrageScanner
 from backend.p2p_scanner import P2PScanner
 from backend.triangular import TriangularScanner
+from backend.signals import SignalScanner
 from backend.alerter import TelegramAlerter
 from backend.ws_server import DashboardWSServer
 
@@ -52,6 +56,7 @@ async def periodic_status(
     scanner: ArbitrageScanner,
     p2p_scanner: P2PScanner,
     tri_scanner: TriangularScanner,
+    signal_scanner: Optional[SignalScanner],
     ws_server: DashboardWSServer,
     ccxt_engine: CCXTEngine,
     interval: float = 60.0,
@@ -68,10 +73,11 @@ async def periodic_status(
 
         logger.info(
             "📊 Status: spot_scans=%d spot_ops=%d | p2p_scans=%d p2p_ops=%d | "
-            "tri_scans=%d tri_ops=%d | books=%d/%d | ws=%d | exchanges=%d",
+            "tri_scans=%d tri_ops=%d | signals=%s | books=%d/%d | ws=%d | exchanges=%d",
             spot["scans"], spot["opportunities"],
             p2p["p2p_scans"], p2p["p2p_opportunities"],
             tri["triangular_scans"], tri["triangular_opportunities"],
+            "ACTIVE" if SIGNALS_ENABLED else "OFF",
             valid_books, len(books),
             ws_server.client_count,
             len(ccxt_engine.connected_exchanges),
@@ -133,6 +139,14 @@ async def main() -> None:
         on_spread=on_tri_spread,
     )
 
+    # Signal scanner
+    async def on_signal(signal_dict):
+        await ws_server.broadcast_spread(signal_dict)
+        # We don't send Telegram alerts for signals yet per prompt, 
+        # but could add alerter.send_any_opportunity(signal_dict) here
+
+    signal_scanner = SignalScanner(ccxt_engine=ccxt_engine, broadcast_func=on_signal) if SIGNALS_ENABLED else None
+
     # ── Start all tasks ──
     await ws_server.start()
     await alerter.send_startup_message()
@@ -144,7 +158,7 @@ async def main() -> None:
         asyncio.create_task(
             periodic_status(
                 book_manager, scanner, p2p_scanner, tri_scanner,
-                ws_server, ccxt_engine,
+                signal_scanner, ws_server, ccxt_engine,
             ),
             name="status",
         ),
@@ -157,6 +171,10 @@ async def main() -> None:
     if TRIANGULAR_ENABLED:
         tasks.append(asyncio.create_task(tri_scanner.run(), name="tri-scanner"))
         logger.info("Triangular scanner enabled")
+
+    if SIGNALS_ENABLED and signal_scanner:
+        tasks.append(asyncio.create_task(signal_scanner.run(), name="signal-scanner"))
+        logger.info("Predictive signals enabled")
 
     logger.info("All %d tasks started — scanner running every %dms", len(tasks), SCAN_INTERVAL_MS)
 
@@ -184,6 +202,8 @@ async def main() -> None:
     scanner.stop()
     p2p_scanner.stop()
     tri_scanner.stop()
+    if signal_scanner:
+        signal_scanner.stop()
 
     for task in tasks:
         task.cancel()

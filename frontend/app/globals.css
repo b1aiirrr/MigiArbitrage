@@ -532,6 +532,13 @@ body::before {
   border: 1px solid rgba(171, 71, 188, 0.25);
 }
 
+.badge-signal {
+  background: rgba(0, 240, 255, 0.1);
+  color: #00f0ff;
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
 /* ── Risk Badges ──────────────────────────────── */
 .badge-low-risk {
   background: rgba(0, 230, 118, 0.1);
