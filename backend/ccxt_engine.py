@@ -29,6 +29,13 @@ from backend.orderbook import OrderBookManager
 
 logger = logging.getLogger("migi.ccxt")
 
+# Per-exchange order book depth overrides.
+# Some exchanges only accept specific limit values.
+_DEPTH_OVERRIDES: dict[str, int] = {
+    "bybit": 50,       # bybit spot: [1, 50, 200, 1000]
+    "coinbase": 50,    # coinbase: limited depth levels
+}
+
 
 def _get_memory_mb() -> float:
     """Get current process RSS in MB. Cross-platform."""
@@ -138,14 +145,18 @@ class CCXTEngine:
 
                 self._connected.add(ex_id)
 
+                # Use per-exchange depth or global default
+                depth = _DEPTH_OVERRIDES.get(ex_id, ORDER_BOOK_DEPTH)
+
                 while self._running:
-                    ob = await exchange.watch_order_book(symbol, ORDER_BOOK_DEPTH)
+                    ob = await exchange.watch_order_book(symbol, depth)
 
                     # Update our internal order book
+                    # Use safe indexing: some exchanges return [price, amount, extra...]
                     book = self.book_manager.get_or_create(ex_id, symbol)
                     book.update_snapshot(
-                        [[float(p), float(q)] for p, q in ob["bids"][:ORDER_BOOK_DEPTH]],
-                        [[float(p), float(q)] for p, q in ob["asks"][:ORDER_BOOK_DEPTH]],
+                        [[float(level[0]), float(level[1])] for level in ob["bids"][:ORDER_BOOK_DEPTH]],
+                        [[float(level[0]), float(level[1])] for level in ob["asks"][:ORDER_BOOK_DEPTH]],
                     )
 
                     backoff = 1.0  # Reset on success
