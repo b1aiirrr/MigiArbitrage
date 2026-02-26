@@ -250,6 +250,7 @@ TRIANGULAR_POLL_INTERVAL: float = float(os.getenv("TRIANGULAR_POLL_INTERVAL", "2
 # ──────────────────────────────────────────────
 MIN_NET_PROFIT_USD: float = float(os.getenv("MIN_NET_PROFIT_USD", "1.00"))
 MIN_P2P_PROFIT_KES: float = float(os.getenv("MIN_P2P_PROFIT_KES", "100"))
+MAX_CAPITAL_USD: float = float(os.getenv("MAX_CAPITAL_USD", "100"))
 SCAN_INTERVAL_MS: int = int(os.getenv("SCAN_INTERVAL_MS", "500"))
 ORDER_BOOK_DEPTH: int = 20
 

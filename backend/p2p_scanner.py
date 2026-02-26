@@ -28,6 +28,7 @@ from backend.config import (
     WITHDRAWAL_FEES,
     PREFERRED_NETWORKS,
     MIN_P2P_PROFIT_KES,
+    MAX_CAPITAL_USD,
 )
 
 logger = logging.getLogger("migi.p2p")
@@ -189,7 +190,7 @@ class P2PScanner:
         usdt_buy_price = 1.0  # USDT is roughly $1 on spot
         sell_price_kes = ad.price  # KES per USDT on P2P
 
-        volume = min(ad.available, ad.max_amount, 500)  # Cap at 500 USDT
+        volume = min(ad.available, ad.max_amount, MAX_CAPITAL_USD)  # Cap by MAX_CAPITAL_USD
         if volume < max(ad.min_amount, 10):
             return
 

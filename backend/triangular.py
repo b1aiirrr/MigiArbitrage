@@ -22,6 +22,7 @@ from backend.config import (
     TRIANGULAR_POLL_INTERVAL,
     EXCHANGE_FEES,
     MIN_NET_PROFIT_USD,
+    MAX_CAPITAL_USD,
 )
 from backend.orderbook import OrderBookManager
 
@@ -167,7 +168,7 @@ class TriangularScanner:
 
         # ── Forward path: buy pair1, buy pair2, sell pair3 ──
         # Start with 1000 units of the quote currency of pair1
-        start_amount = 1000.0
+        start_amount = MAX_CAPITAL_USD
 
         # Step 1: Buy base of pair1 with quote
         step1_amount = (start_amount / ask1.price) * (1 - taker_fee)
@@ -216,7 +217,7 @@ class TriangularScanner:
             self._opportunity_count += 1
 
         # ── Reverse path: sell pair3, sell pair2, buy pair1 ──
-        r_start = 1000.0
+        r_start = MAX_CAPITAL_USD
         r_step1 = (r_start / ask3.price) * (1 - taker_fee)
         r_step2 = (r_step1 * bid2.price) * (1 - taker_fee)
         r_step3 = (r_step2 * bid1.price) * (1 - taker_fee)

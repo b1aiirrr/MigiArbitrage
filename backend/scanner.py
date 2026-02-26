@@ -19,6 +19,7 @@ from backend.config import (
     WITHDRAWAL_FEES,
     PREFERRED_NETWORKS,
     MIN_NET_PROFIT_USD,
+    MAX_CAPITAL_USD,
     SCAN_INTERVAL_MS,
 )
 from backend.orderbook import OrderBookManager, OrderBook
@@ -143,6 +144,11 @@ class ArbitrageScanner:
         volume = min(buy_volume, sell_volume)
         if volume <= 0:
             return
+
+        # Cap volume by MAX_CAPITAL_USD
+        volume_usd = volume * ask.price
+        if volume_usd > MAX_CAPITAL_USD:
+            volume = MAX_CAPITAL_USD / ask.price
 
         base = symbol.split("/")[0]
         quote = symbol.split("/")[1]
