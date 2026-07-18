@@ -1,5 +1,5 @@
 """
-MigiArbitrage v2.0 — Telegram Alert Module
+MigiArbitrage v3.0 — Telegram Alert Module
 ============================================
 Sends formatted alerts with inline keyboard buttons for P2P trades.
 Supports spot, P2P, and triangular opportunity types.
@@ -77,7 +77,9 @@ class TelegramAlerter:
             f"📋 Fees: maker=${opp.fee_maker:.4f} | taker=${opp.fee_taker:.4f} | "
             f"withdraw=${opp.fee_withdrawal:.4f}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔒 <b>Wallet Status:</b> {wallet_status}"
+            f"🔒 <b>Wallet Status:</b> {wallet_status}\n"
+            f"🛤 <b>Route:</b> {getattr(opp, 'base', 'N/A')} via {getattr(opp, 'route_network', 'default')} (${getattr(opp, 'route_fee_usd', 0.0):.4f}){f' — saved ${opp.route_savings_usd:.2f}' if getattr(opp, 'route_savings_usd', 0.0) > 0.01 else ''}\n"
+            f"⏱ <b>Data Age:</b> {getattr(opp, 'data_age_ms', 0.0):.0f}ms"
             f"{risk_badge}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏱ <i>Alert-only mode — no trades executed</i>"
@@ -192,7 +194,7 @@ class TelegramAlerter:
         ex_text = exchanges + (f" +{remaining} more" if remaining > 0 else "")
 
         msg = (
-            "🚀 <b>MigiArbitrage v2.0 Scanner Started</b>\n"
+            "🚀 <b>MigiArbitrage v3.0 Scanner Started</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"📡 Exchanges: {ex_text}\n"
             "🔄 Modes: Spot ↔ Spot | Spot → P2P | Triangular\n"

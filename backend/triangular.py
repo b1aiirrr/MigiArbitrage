@@ -1,11 +1,17 @@
 """
-MigiArbitrage v2.0 — Triangular Arbitrage Module
+MigiArbitrage v3.0 — Triangular Arbitrage Module
 ==================================================
 Scans for 3-way price inefficiencies within a single exchange.
 E.g., KES → USDT → BTC → KES on Binance.
 
 Advantage: Zero withdrawal fees, zero network latency —
 only trading fees apply since all trades happen intra-exchange.
+
+v3.0 changes:
+- Auto-discovers ALL valid triangular paths via graph DFS
+- Replaces 3 hardcoded paths with 20-100+ dynamic paths
+- Periodic re-discovery (hourly) to catch new listings
+- asyncio.sleep(0) yields between exchanges
 """
 
 from __future__ import annotations
@@ -20,11 +26,13 @@ from config import (
     TRIANGULAR_EXCHANGES,
     TRIANGULAR_PATHS,
     TRIANGULAR_POLL_INTERVAL,
+    TRIANGULAR_AUTO_DISCOVER,
     EXCHANGE_FEES,
     MIN_NET_PROFIT_USD,
     MAX_CAPITAL_USD,
 )
 from orderbook import OrderBookManager
+from tri_graph import discover_triangles_for_exchange
 
 logger = logging.getLogger("migi.triangular")
 
@@ -84,6 +92,8 @@ class TriangularScanner:
     """
     Scans for 3-way arbitrage within a single exchange.
 
+    v3.0: Auto-discovers all valid paths via graph-based DFS.
+
     Algorithm:
     1. Start with currency A
     2. Convert A → B using pair1
@@ -92,16 +102,24 @@ class TriangularScanner:
     5. If final_A > initial_A - fees, it's profitable
     """
 
+    # Re-discover paths every hour
+    REDISCOVERY_INTERVAL_S: float = 3600.0
+
     def __init__(
         self,
         book_manager: OrderBookManager,
+        ccxt_engine=None,
         on_spread=None,
     ) -> None:
         self.book_manager = book_manager
+        self.ccxt_engine = ccxt_engine
         self.on_spread = on_spread
         self._running = True
         self._scan_count = 0
         self._opportunity_count = 0
+        # Per-exchange discovered paths
+        self._discovered_paths: dict[str, list[list[str]]] = {}
+        self._last_discovery_ns: int = 0
 
     async def run(self) -> None:
         """Main triangular scan loop."""
@@ -110,14 +128,26 @@ class TriangularScanner:
             return
 
         logger.info(
-            "Triangular scanner started — %d paths × %d exchanges (interval=%.0fs)",
+            "Triangular scanner started — exchanges=%s, auto_discover=%s, "
+            "fallback_paths=%d (interval=%.0fs)",
+            ", ".join(TRIANGULAR_EXCHANGES),
+            TRIANGULAR_AUTO_DISCOVER,
             len(TRIANGULAR_PATHS),
-            len(TRIANGULAR_EXCHANGES),
             TRIANGULAR_POLL_INTERVAL,
         )
 
+        # Initial path discovery
+        if TRIANGULAR_AUTO_DISCOVER and self.ccxt_engine:
+            await self._discover_paths()
+
         while self._running:
             try:
+                # Periodic re-discovery
+                if TRIANGULAR_AUTO_DISCOVER and self.ccxt_engine:
+                    elapsed_s = (time.time_ns() - self._last_discovery_ns) / 1_000_000_000
+                    if elapsed_s > self.REDISCOVERY_INTERVAL_S:
+                        await self._discover_paths()
+
                 await self._scan_all()
                 self._scan_count += 1
             except Exception as exc:
@@ -125,27 +155,56 @@ class TriangularScanner:
 
             await asyncio.sleep(TRIANGULAR_POLL_INTERVAL)
 
+    async def _discover_paths(self) -> None:
+        """Discover triangular paths from exchange market data."""
+        for exchange_id in TRIANGULAR_EXCHANGES:
+            exchange = self.ccxt_engine._exchanges.get(exchange_id)
+            if not exchange:
+                continue
+
+            try:
+                if not exchange.markets:
+                    await exchange.load_markets()
+
+                paths = discover_triangles_for_exchange(exchange.markets)
+                self._discovered_paths[exchange_id] = paths
+
+                logger.info(
+                    "🔺 [%s] Discovered %d triangular paths (was %d hardcoded)",
+                    exchange_id, len(paths), len(TRIANGULAR_PATHS),
+                )
+            except Exception as exc:
+                logger.warning("[%s] Triangle discovery failed: %s", exchange_id, exc)
+                # Fall back to hardcoded paths
+                self._discovered_paths[exchange_id] = TRIANGULAR_PATHS
+
+        self._last_discovery_ns = time.time_ns()
+
+    def _get_paths_for_exchange(self, exchange: str) -> list[list[str]]:
+        """Get paths for an exchange — discovered or fallback."""
+        if TRIANGULAR_AUTO_DISCOVER and exchange in self._discovered_paths:
+            return self._discovered_paths[exchange]
+        return TRIANGULAR_PATHS
+
     async def _scan_all(self) -> None:
         """Scan all configured paths on all exchanges."""
         for exchange in TRIANGULAR_EXCHANGES:
             fees = EXCHANGE_FEES.get(exchange, {"maker": 0.001, "taker": 0.001})
+            paths = self._get_paths_for_exchange(exchange)
 
-            for path in TRIANGULAR_PATHS:
+            for path in paths:
                 if len(path) != 3:
                     continue
                 await self._evaluate_triangle(exchange, path, fees)
+
+            # Yield to event loop between exchanges
+            await asyncio.sleep(0)
 
     async def _evaluate_triangle(
         self, exchange: str, path: list[str], fees: dict
     ) -> None:
         """
-        Evaluate a single triangular path.
-        Path = [pair1, pair2, pair3]
-
-        For simplicity, we assume:
-        - Step 1: Buy base of pair1 (taker)
-        - Step 2: Buy or sell pair2 to convert
-        - Step 3: Sell to return to original currency (taker)
+        Evaluate a single triangular path in both forward and reverse directions.
         """
         book1 = self.book_manager.get(exchange, path[0])
         book2 = self.book_manager.get(exchange, path[1])
@@ -167,25 +226,17 @@ class TriangularScanner:
         taker_fee = fees.get("taker", 0.001)
 
         # ── Forward path: buy pair1, buy pair2, sell pair3 ──
-        # Start with 1000 units of the quote currency of pair1
         start_amount = MAX_CAPITAL_USD
 
-        # Step 1: Buy base of pair1 with quote
         step1_amount = (start_amount / ask1.price) * (1 - taker_fee)
-
-        # Step 2: Use that base to buy base of pair2
-        # This depends on the pair relationship
         step2_amount = (step1_amount / ask2.price) * (1 - taker_fee)
-
-        # Step 3: Sell back to original currency
         step3_amount = (step2_amount * bid3.price) * (1 - taker_fee)
 
-        # Profit
         profit = step3_amount - start_amount
         profit_pct = (profit / start_amount) * 100
 
         if profit > MIN_NET_PROFIT_USD:
-            total_fee = start_amount * taker_fee * 3  # Approximate
+            total_fee = start_amount * taker_fee * 3
 
             opportunity = TriangularOpportunity(
                 exchange=exchange,
@@ -262,7 +313,9 @@ class TriangularScanner:
 
     @property
     def stats(self) -> dict:
+        total_paths = sum(len(p) for p in self._discovered_paths.values())
         return {
             "triangular_scans": self._scan_count,
             "triangular_opportunities": self._opportunity_count,
+            "discovered_paths": total_paths,
         }

@@ -1,5 +1,5 @@
 """
-MigiArbitrage v2.0 — Configuration Module
+MigiArbitrage v3.0 — Configuration Module
 ===========================================
 Central configuration for 9+ exchanges, P2P payment methods,
 triangular arbitrage, memory guardrails, and env var loading.
@@ -14,7 +14,10 @@ load_dotenv()
 # ──────────────────────────────────────────────
 #  Memory Optimization (2 GB RAM server)
 # ──────────────────────────────────────────────
-gc.set_threshold(700, 10, 5)
+# High gen-0 threshold to minimize stop-the-world GC pauses on the hot path.
+# Default is (700, 10, 10). We raise gen-0 to 50000 so collections only
+# trigger after 50k allocations instead of 700, massively reducing GC jitter.
+gc.set_threshold(50_000, 50, 10)
 MEMORY_LIMIT_MB: int = int(os.getenv("MEMORY_LIMIT_MB", "1500"))
 MEMORY_CHECK_INTERVAL: float = 30.0  # seconds
 
@@ -244,13 +247,14 @@ TRIANGULAR_PATHS: list[list[str]] = [
     ["ETH/USDT", "SOL/ETH", "SOL/USDT"],
 ]
 TRIANGULAR_POLL_INTERVAL: float = float(os.getenv("TRIANGULAR_POLL_INTERVAL", "2"))
+TRIANGULAR_AUTO_DISCOVER: bool = os.getenv("TRIANGULAR_AUTO_DISCOVER", "true").lower() == "true"
 
 # ──────────────────────────────────────────────
 #  Scanner Thresholds
 # ──────────────────────────────────────────────
 MIN_NET_PROFIT_USD: float = float(os.getenv("MIN_NET_PROFIT_USD", "1.00"))
 MIN_P2P_PROFIT_KES: float = float(os.getenv("MIN_P2P_PROFIT_KES", "100"))
-MAX_CAPITAL_USD: float = float(os.getenv("MAX_CAPITAL_USD", "100"))
+MAX_CAPITAL_USD: float = float(os.getenv("MAX_CAPITAL_USD", "1000"))
 SCAN_INTERVAL_MS: int = int(os.getenv("SCAN_INTERVAL_MS", "500"))
 ORDER_BOOK_DEPTH: int = 20
 
