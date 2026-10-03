@@ -100,6 +100,8 @@ class CCXTEngine:
         self._running = True
         self._connected: set[str] = set()
         self._tasks: list[asyncio.Task] = []
+        self._ws_tasks: dict[str, asyncio.Task] = {}
+        self.STREAM_TIMEOUT_NS = 10 * 1_000_000_000
         self._restart_count = 0
         # Fee cache: (exchange_id, asset) -> _CachedFeeEntry
         self._fee_cache: dict[tuple[str, str], _CachedFeeEntry] = {}
@@ -139,26 +141,35 @@ class CCXTEngine:
             len(self._exchanges), len(ENABLED_EXCHANGES),
         )
 
+    async def _exchange_websocket_loop(self, ex_id: str) -> None:
+        """Wrapper to watch all symbols for a specific exchange."""
+        exchange = self._exchanges[ex_id]
+        tasks = []
+        for symbol in SPOT_SYMBOLS:
+            task = asyncio.create_task(
+                self._watch_orderbook(ex_id, exchange, symbol),
+                name=f"ob-{ex_id}-{symbol}",
+            )
+            tasks.append(task)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     async def run(self) -> None:
         """Start watching order books on all exchanges concurrently."""
-        for ex_id, exchange in self._exchanges.items():
-            for symbol in SPOT_SYMBOLS:
-                task = asyncio.create_task(
-                    self._watch_orderbook(ex_id, exchange, symbol),
-                    name=f"ob-{ex_id}-{symbol}",
-                )
-                self._tasks.append(task)
+        for ex_id in self._exchanges:
+            task = asyncio.create_task(self._exchange_websocket_loop(ex_id))
+            self._ws_tasks[ex_id] = task
 
         logger.info(
-            "Started %d order book watchers across %d exchanges",
-            len(self._tasks), len(self._exchanges),
+            "Started order book watchers across %d exchanges",
+            len(self._exchanges),
         )
 
-        # Memory watchdog
+        # Memory watchdog and stream health monitor
         asyncio.create_task(self._memory_watchdog(), name="mem-watchdog")
+        asyncio.create_task(self._monitor_stream_health(), name="stream-health")
 
         # Wait for all tasks
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*self._ws_tasks.values(), return_exceptions=True)
 
     async def _watch_orderbook(
         self, ex_id: str, exchange: ccxtpro.Exchange, symbol: str
@@ -209,6 +220,109 @@ class CCXTEngine:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 
+    async def _monitor_stream_health(self) -> None:
+        """Requirement #2: Background loop that hunts for silent freezes every 5 seconds."""
+        await asyncio.sleep(10)  # Grace period during boot startup
+        
+        while self._running:
+            try:
+                now_ns = time.time_ns()
+                
+                for ex_id, exchange in list(self._exchanges.items()):
+                    # Get all managed books for this specific exchange
+                    ex_books = [
+                        b for b in self.book_manager._books.values() 
+                        if b.exchange == ex_id and b.last_update_ns > 0
+                    ]
+                    
+                    if not ex_books:
+                        continue
+                    
+                    # Find the freshest update time among all pairs for this exchange
+                    latest_ex_update = max(b.last_update_ns for b in ex_books)
+                    elapsed_ns = now_ns - latest_ex_update
+                    
+                    if elapsed_ns > self.STREAM_TIMEOUT_NS:
+                        logger.warning(
+                            "🚨 [STREAM FREEZE] %s showed zero activity for "
+                            "%.2fs. Invalidating books and recycling...",
+                            ex_id.upper(), elapsed_ns / 1_000_000_000
+                        )
+                        
+                        # Instantly invalidate books to clean up the dashboard
+                        for book in ex_books:
+                            book._valid = False
+                        
+                        # Trigger isolated surgical strike recovery
+                        asyncio.create_task(self._recycle_exchange_stream(ex_id))
+                        
+            except Exception as e:
+                logger.error(f"Error in stream health monitor loop: {e}")
+                
+            await asyncio.sleep(5)  # Check intervals
+
+    async def _recycle_exchange_stream(self, exchange_id: str) -> None:
+        """Requirement #3: Reinitializes a dead exchange connection without stopping the engine."""
+        # Prevent concurrent overlapping recycles for the same exchange
+        if getattr(self._exchanges[exchange_id], "_recycling", False):
+            return
+        
+        self._exchanges[exchange_id]._recycling = True
+        logger.info("🔄 Commencing isolated teardown for %s WebSocket stream...", exchange_id)
+        
+        # 1. Cancel existing listening loop task
+        if exchange_id in self._ws_tasks:
+            self._ws_tasks[exchange_id].cancel()
+            try:
+                await self._ws_tasks[exchange_id]
+            except asyncio.CancelledError:
+                pass
+        
+        # 2. Close sockets gracefully via CCXT
+        try:
+            await self._exchanges[exchange_id].close()
+        except Exception as e:
+            logger.debug("Exception during socket close for %s: %s", exchange_id, e)
+
+        # 3. Re-initialize stream loop with exponential backoff safety
+        backoff = 2.0
+        max_backoff = 60.0
+        
+        while self._running:
+            try:
+                logger.info("🔌 Attempting clean reconnect to %s...", exchange_id)
+                
+                # Re-instantiate the exchange instance to completely clear internal WS cache
+                exchange_class = getattr(ccxtpro, exchange_id)
+                keys = EXCHANGE_API_KEYS.get(exchange_id, {})
+                config = {
+                    "enableRateLimit": True,
+                    "options": {
+                        "defaultType": "spot",
+                        "watchOrderBook": {"limit": ORDER_BOOK_DEPTH},
+                    },
+                }
+                if keys.get("apiKey"):
+                    config.update(keys)
+                self._exchanges[exchange_id] = exchange_class(config)
+                
+                # Spawn the new active listening task wrapper
+                new_task = asyncio.create_task(self._exchange_websocket_loop(exchange_id))
+                self._ws_tasks[exchange_id] = new_task
+                
+                # Check back briefly to ensure it didn't instantly crash
+                await asyncio.sleep(2)
+                if not new_task.done():
+                    logger.info("✅ %s stream successfully recovered and active.", exchange_id.upper())
+                    break
+                    
+            except Exception as e:
+                logger.error("❌ Reconnection failed for %s: %s. Retrying in %ss...", exchange_id, e, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+                
+        self._exchanges[exchange_id]._recycling = False
+
     # ── Fee Cache Layer ──────────────────────────
 
     async def _fee_refresh_loop(self) -> None:
@@ -226,46 +340,79 @@ class CCXTEngine:
             for ex_id, exchange in self._exchanges.items():
                 try:
                     # ── Fetch currency info (withdrawal fees + wallet status) ──
-                    currencies = await exchange.fetch_currencies()
+                    currencies = {}
+                    if exchange.has.get("fetchCurrencies", False):
+                        try:
+                            currencies = await exchange.fetch_currencies()
+                        except Exception as e:
+                            logger.debug("[%s] fetch_currencies failed: %s", ex_id, e)
+                    
+                    if not currencies:
+                        try:
+                            await exchange.load_markets()
+                            currencies = getattr(exchange, "currencies", {})
+                        except Exception as e:
+                            logger.debug("[%s] load_markets fallback failed: %s", ex_id, e)
+                            
+                    deposit_withdraw_fees = {}
+                    if exchange.has.get("fetchDepositWithdrawFees", False):
+                        try:
+                            deposit_withdraw_fees = await exchange.fetch_deposit_withdraw_fees()
+                        except Exception as e:
+                            logger.debug("[%s] fetch_deposit_withdraw_fees failed: %s", ex_id, e)
 
-                    for asset, info in currencies.items():
-                        networks = info.get("networks", {})
+                    # We iterate over our watched SPOT_SYMBOLS to only cache what we care about
+                    assets_to_cache = {s.split("/")[0].upper() for s in SPOT_SYMBOLS} | {s.split("/")[1].upper() for s in SPOT_SYMBOLS}
+                    
+                    for asset in assets_to_cache:
                         withdraw_fees: dict[str, float] = {}
                         wallet_status: dict[str, dict] = {}
-
+                        
+                        info = currencies.get(asset, {})
+                        networks = info.get("networks", {})
+                        
+                        # Fallback to deposit_withdraw_fees if networks not in currencies
+                        if not networks and asset in deposit_withdraw_fees:
+                            networks = deposit_withdraw_fees[asset].get("networks", {})
+                            
                         for net_id, net_info in networks.items():
                             net_key = net_id.upper()
-                            withdraw_fees[net_key] = float(net_info.get("fee", 0) or 0)
+                            fee_raw = net_info.get("fee", 0.0)
+                            try:
+                                fee = float(fee_raw) if fee_raw is not None else 0.0
+                            except (ValueError, TypeError):
+                                fee = 0.0
+                                
+                            withdraw_fees[net_key] = fee
                             wallet_status[net_key] = {
-                                "deposit_enabled": net_info.get("deposit", True),
-                                "withdraw_enabled": net_info.get("withdraw", True),
-                                "min_withdraw": float(
-                                    net_info.get("limits", {}).get("withdraw", {}).get("min", 0) or 0
-                                ),
+                                "deposit_enabled": bool(net_info.get("deposit", net_info.get("depositEnable", True))),
+                                "withdraw_enabled": bool(net_info.get("withdraw", net_info.get("withdrawEnable", True))),
+                                "min_withdraw": float(net_info.get("limits", {}).get("withdraw", {}).get("min", 0) or 0),
                             }
 
                         # Fallback for exchanges that don't expose per-network data
-                        if not networks:
+                        if not networks and info:
                             withdraw_fees[asset.upper()] = float(info.get("fee", 0) or 0)
                             wallet_status[asset.upper()] = {
-                                "deposit_enabled": info.get("deposit", True),
-                                "withdraw_enabled": info.get("withdraw", True),
+                                "deposit_enabled": bool(info.get("deposit", True)),
+                                "withdraw_enabled": bool(info.get("withdraw", True)),
                                 "min_withdraw": 0.0,
                             }
-
-                        key = (ex_id, asset.upper())
-                        existing = self._fee_cache.get(key)
-                        if existing:
-                            # Preserve trading fees, update wallet/withdrawal data
-                            existing.withdraw_fees = withdraw_fees
-                            existing.wallet_status = wallet_status
-                            existing.updated_ns = time.time_ns()
-                        else:
-                            self._fee_cache[key] = _CachedFeeEntry(
-                                withdraw_fees=withdraw_fees,
-                                wallet_status=wallet_status,
-                            )
-                        refresh_count += 1
+                            
+                        # If we successfully parsed any info for the asset
+                        if withdraw_fees or wallet_status:
+                            key = (ex_id, asset.upper())
+                            existing = self._fee_cache.get(key)
+                            if existing:
+                                existing.withdraw_fees = withdraw_fees
+                                existing.wallet_status = wallet_status
+                                existing.updated_ns = time.time_ns()
+                            else:
+                                self._fee_cache[key] = _CachedFeeEntry(
+                                    withdraw_fees=withdraw_fees,
+                                    wallet_status=wallet_status,
+                                )
+                            refresh_count += 1
 
                     # ── Fetch trading fees (maker/taker) ──
                     try:

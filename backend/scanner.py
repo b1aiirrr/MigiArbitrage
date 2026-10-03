@@ -288,8 +288,8 @@ class ArbitrageScanner:
             arb_type="spot",
             buy_exchange=buy_ex,
             sell_exchange=sell_ex,
-            ask_price=optimal.vwap_buy,
-            bid_price=optimal.vwap_sell,
+            ask_price=ask.price,         # Dashboard Top-of-Book (matches Exchange UI)
+            bid_price=bid.price,         # Dashboard Top-of-Book (matches Exchange UI)
             raw_spread_pct=raw_spread_pct,
             volume=optimal.volume,
             fee_maker=fee_maker_abs,
