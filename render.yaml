@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: migi-arbitrage-backend
+    env: python
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: "cd backend && export WS_SERVER_PORT=$PORT && python main.py"
+    envVars:
+      - key: WS_SERVER_HOST
+        value: "0.0.0.0"
+      - key: PORT
+        value: "10000"
+      - key: PYTHON_VERSION
+        value: "3.11.0"
