@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8765";
+const WS_URL = "wss://migiarbitrage-api-oNpGL.azurewebsites.net";
 
 export interface SpreadData {
     pair: string;
