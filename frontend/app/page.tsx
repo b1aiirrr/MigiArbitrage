@@ -10,7 +10,7 @@ import { useArbitrageStream } from "@/hooks/useArbitrageStream";
 
 
 export default function DashboardPage() {
-    const { connected, spreads, history, books, clientCount } =
+    const { connected, spreads, history, books, clientCount, lastPayment } =
         useArbitrageStream();
 
     const allAlerts = [...spreads, ...history].sort(
@@ -121,6 +121,44 @@ export default function DashboardPage() {
                     </p>
                 </div>
             </footer>
+
+            {/* Subtle M-PESA Payment Toast */}
+            {lastPayment && (
+                <div style={{
+                    position: 'fixed',
+                    bottom: '20px',
+                    right: '20px',
+                    backgroundColor: 'var(--color-bg-panel)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                    animation: 'slideIn 0.3s ease-out forwards',
+                    zIndex: 9999,
+                    backdropFilter: 'blur(10px)'
+                }}>
+                    <div style={{ 
+                        width: '32px', height: '32px', 
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)', 
+                        borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#4CAF50', fontWeight: 'bold'
+                    }}>
+                        M
+                    </div>
+                    <div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '2px' }}>
+                            Incoming Payment
+                        </div>
+                        <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--color-text-bright)' }}>
+                            KES {lastPayment.TransAmount} <span style={{ fontWeight: 400, opacity: 0.8 }}>from {lastPayment.FirstName}</span>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

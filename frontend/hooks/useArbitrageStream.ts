@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const WS_URL = "wss://migiarbitrage-api-oNpGL.azurewebsites.net";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://migiarbitrage-api-oNpGL.azurewebsites.net";
 
 export interface SpreadData {
     pair: string;
@@ -48,6 +48,7 @@ interface StreamState {
     history: SpreadData[];
     books: Record<string, any>;
     clientCount: number;
+    lastPayment: any;
 }
 
 export function useArbitrageStream(): StreamState {
@@ -56,6 +57,7 @@ export function useArbitrageStream(): StreamState {
     const [history, setHistory] = useState<SpreadData[]>([]);
     const [books, setBooks] = useState<Record<string, any>>({});
     const [clientCount, setClientCount] = useState(0);
+    const [lastPayment, setLastPayment] = useState<any>(null);
 
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -97,6 +99,14 @@ export function useArbitrageStream(): StreamState {
 
                         case "status":
                             setClientCount(msg.data?.clients || 0);
+                            break;
+
+                        case "payment":
+                            setLastPayment(msg.data);
+                            // Clear it after 10 seconds so the toast disappears
+                            setTimeout(() => {
+                                setLastPayment(null);
+                            }, 10000);
                             break;
 
                         case "pong":
@@ -149,5 +159,5 @@ export function useArbitrageStream(): StreamState {
         };
     }, [connect]);
 
-    return { connected, spreads, history, books, clientCount };
+    return { connected, spreads, history, books, clientCount, lastPayment };
 }
