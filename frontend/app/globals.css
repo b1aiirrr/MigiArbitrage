@@ -78,11 +78,12 @@ html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-bg-primary);
 }
 
 body {
   font-family: var(--font-sans);
-  background: var(--color-bg-primary);
+  background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   line-height: 1.6;
   min-height: 100vh;
@@ -717,8 +718,8 @@ body::before {
   width: 48px;
   height: 48px;
   border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
+  background: transparent;
+  border: 1px solid transparent;
   display: flex;
   align-items: center;
   justify-content: center;
