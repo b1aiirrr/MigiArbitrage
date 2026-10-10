@@ -254,7 +254,7 @@ TRIANGULAR_AUTO_DISCOVER: bool = os.getenv("TRIANGULAR_AUTO_DISCOVER", "true").l
 # ──────────────────────────────────────────────
 #  Scanner Thresholds
 # ──────────────────────────────────────────────
-MIN_NET_PROFIT_USD: float = float(os.getenv("MIN_NET_PROFIT_USD", "1.00"))
+MIN_NET_PROFIT_USD: float = float(os.getenv("MIN_NET_PROFIT_USD", "0.50"))
 MIN_P2P_PROFIT_KES: float = float(os.getenv("MIN_P2P_PROFIT_KES", "100"))
 MAX_CAPITAL_USD: float = float(os.getenv("MAX_CAPITAL_USD", "1000"))
 SCAN_INTERVAL_MS: int = int(os.getenv("SCAN_INTERVAL_MS", "500"))
