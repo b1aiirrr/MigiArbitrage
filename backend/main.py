@@ -34,6 +34,7 @@ from triangular import TriangularScanner
 from signals import SignalScanner
 from alerter import TelegramAlerter
 from ws_server import DashboardWSServer
+from executor import ExecutionEngine, EXECUTOR_ENABLED
 
 # ── Logging ──────────────────────────────────
 logging.basicConfig(
@@ -111,32 +112,45 @@ async def periodic_status(
     signal_scanner: Optional[SignalScanner],
     ws_server: DashboardWSServer,
     ccxt_engine: CCXTEngine,
-    interval: float = 60.0,
+    executor: Optional[ExecutionEngine] = None,
+    interval: float = 10.0,
 ) -> None:
-    """Log system status periodically."""
+    """Log system status periodically and stream books to dashboard."""
+    # Brief initial pause to let order books populate
+    await asyncio.sleep(3.0)
     while True:
+        try:
+            spot = scanner.stats
+            p2p = p2p_scanner.stats
+            tri = tri_scanner.stats
+            books = book_manager.stats()
+            valid_books = sum(1 for b in books.values() if b.get("valid"))
+            fresh_books = sum(1 for b in books.values() if b.get("fresh", False))
+
+            logger.info(
+                "📊 Status: spot_scans=%d spot_ops=%d | p2p_scans=%d p2p_ops=%d | "
+                "tri_scans=%d tri_ops=%d | signals=%s | books=%d/%d (fresh=%d) | ws=%d | exchanges=%d",
+                spot["scans"], spot["opportunities"],
+                p2p["p2p_scans"], p2p["p2p_opportunities"],
+                tri["triangular_scans"], tri["triangular_opportunities"],
+                "ACTIVE" if SIGNALS_ENABLED else "OFF",
+                valid_books, len(books), fresh_books,
+                ws_server.client_count,
+                len(ccxt_engine.connected_exchanges),
+            )
+
+            # Broadcast books to dashboard
+            await ws_server.broadcast_books(books)
+
+            # Broadcast executor stats to dashboard if enabled
+            if EXECUTOR_ENABLED and executor is not None:
+                await ws_server.broadcast_executor_stats(executor.stats)
+
+        except Exception as exc:
+            logger.error("periodic_status error: %s", exc)
+
         await asyncio.sleep(interval)
 
-        spot = scanner.stats
-        p2p = p2p_scanner.stats
-        tri = tri_scanner.stats
-        books = book_manager.stats()
-        valid_books = sum(1 for b in books.values() if b["valid"])
-        fresh_books = sum(1 for b in books.values() if b.get("fresh", False))
-
-        logger.info(
-            "📊 Status: spot_scans=%d spot_ops=%d | p2p_scans=%d p2p_ops=%d | "
-            "tri_scans=%d tri_ops=%d | signals=%s | books=%d/%d (fresh=%d) | ws=%d | exchanges=%d",
-            spot["scans"], spot["opportunities"],
-            p2p["p2p_scans"], p2p["p2p_opportunities"],
-            tri["triangular_scans"], tri["triangular_opportunities"],
-            "ACTIVE" if SIGNALS_ENABLED else "OFF",
-            valid_books, len(books), fresh_books,
-            ws_server.client_count,
-            len(ccxt_engine.connected_exchanges),
-        )
-
-        await ws_server.broadcast_books(books)
 
 
 async def main() -> None:
@@ -165,9 +179,15 @@ async def main() -> None:
     # Dashboard WebSocket server
     ws_server = DashboardWSServer()
 
+    # Execution engine (dry-run by default)
+    executor = ExecutionEngine(ccxt_engine=ccxt_engine, alerter=alerter)
+
     # Spot scanner
     async def on_spot_spread(opportunity):
         await ws_server.broadcast_spread(opportunity)
+        # Pass to execution engine (will dry-run or live-execute)
+        if EXECUTOR_ENABLED:
+            await executor.execute_opportunity(opportunity)
 
     scanner = ArbitrageScanner(
         book_manager=book_manager,
@@ -218,7 +238,7 @@ async def main() -> None:
         asyncio.create_task(
             periodic_status(
                 book_manager, scanner, p2p_scanner, tri_scanner,
-                signal_scanner, ws_server, ccxt_engine,
+                signal_scanner, ws_server, ccxt_engine, executor,
             ),
             name="status",
         ),
