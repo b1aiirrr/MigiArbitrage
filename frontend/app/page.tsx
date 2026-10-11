@@ -9,9 +9,12 @@ import { useArbitrageStream } from "@/hooks/useArbitrageStream";
 
 
 
+import PaystackModal from "@/components/PaystackModal";
+
 export default function DashboardPage() {
     const { connected, spreads, history, books, clientCount, lastPayment } =
         useArbitrageStream();
+    const [showPayModal, setShowPayModal] = React.useState(false);
 
     const allAlerts = [...spreads, ...history].sort(
         (a, b) => b.timestamp - a.timestamp
@@ -42,6 +45,25 @@ export default function DashboardPage() {
                     <span className="version-badge">v2.0</span>
                 </div>
                 <div className="app-header-right">
+                    <button
+                        onClick={() => setShowPayModal(true)}
+                        style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            backgroundColor: "rgba(0, 195, 247, 0.15)",
+                            border: "1px solid rgba(0, 195, 247, 0.4)",
+                            color: "#00C3F7",
+                            padding: "6px 12px",
+                            borderRadius: "8px",
+                            fontSize: "0.8rem",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            transition: "all 0.2s ease"
+                        }}
+                    >
+                        💳 Top Up M-PESA
+                    </button>
                     <div className="connection-status" id="connection-status">
                         <span
                             className={`status-dot ${connected ? "status-dot-connected" : "status-dot-disconnected"
@@ -54,6 +76,9 @@ export default function DashboardPage() {
                     </span>
                 </div>
             </header>
+
+            <PaystackModal isOpen={showPayModal} onClose={() => setShowPayModal(false)} />
+
 
             {/* ── Stats Grid ── */}
             <div className="stats-grid">
