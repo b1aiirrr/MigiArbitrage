@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://migiarbitrage-api-oNpGL.azurewebsites.net";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://migi-arbitrage-backend.onrender.com";
 
 export interface SpreadData {
     pair: string;

@@ -23,7 +23,7 @@ from typing import Optional
 
 from config import (
     SCAN_INTERVAL_MS, ENABLED_EXCHANGES, P2P_ENABLED, TRIANGULAR_ENABLED,
-    SIGNALS_ENABLED,
+    SIGNALS_ENABLED, WS_SERVER_PORT,
 )
 from orderbook import OrderBookManager
 from ccxt_engine import CCXTEngine
@@ -49,6 +49,10 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logging.getLogger("ccxt").setLevel(logging.WARNING)
 
 
+# Force unbuffered line output for cloud logs and port detection
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
+
 # ── uvloop (Linux-only, graceful fallback) ───
 def _install_uvloop() -> None:
     """Install uvloop as the default event loop policy on Linux."""
@@ -63,6 +67,7 @@ def _install_uvloop() -> None:
         logger.debug("Non-Linux platform (%s), skipping uvloop", sys.platform)
 
 _install_uvloop()
+
 
 
 # ── Shared Executor ──────────────────────────
@@ -167,6 +172,8 @@ async def main() -> None:
     # Dashboard WebSocket & HTTP server (started first to pass cloud health probes immediately)
     ws_server = DashboardWSServer()
     await ws_server.start()
+    print(f"Listening on port {WS_SERVER_PORT}", flush=True)
+    print(f"Server listening on http://0.0.0.0:{WS_SERVER_PORT}", flush=True)
 
     book_manager = OrderBookManager(max_depth=20)
 
