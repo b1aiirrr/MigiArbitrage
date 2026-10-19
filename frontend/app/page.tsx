@@ -16,9 +16,24 @@ export default function DashboardPage() {
         useArbitrageStream();
     const [showPayModal, setShowPayModal] = React.useState(false);
 
-    const allAlerts = [...spreads, ...history].sort(
-        (a, b) => b.timestamp - a.timestamp
-    );
+    const allAlerts = React.useMemo(() => {
+        const combined = [...spreads, ...history];
+        const seen = new Set<string>();
+        const unique: typeof combined = [];
+        combined.sort((a, b) => {
+            const aT = typeof a.timestamp === "number" ? a.timestamp : new Date(a.timestamp).getTime() / 1000;
+            const bT = typeof b.timestamp === "number" ? b.timestamp : new Date(b.timestamp).getTime() / 1000;
+            return bT - aT;
+        });
+        for (const item of combined) {
+            const key = `${item.pair}_${item.buy_exchange || ""}_${item.sell_exchange || ""}_${item.arb_type || "spot"}_${item.type || ""}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                unique.push(item);
+            }
+        }
+        return unique;
+    }, [spreads, history]);
 
     // Stats
     const totalSpreads = allAlerts.length;
@@ -41,8 +56,13 @@ export default function DashboardPage() {
             {/* ── Header ── */}
             <header className="app-header">
                 <div className="app-header-left">
-                    <Logo width={200} height={44} />
-                    <span className="version-badge">v2.0</span>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <Logo width={200} height={44} />
+                        <span className="footer-tagline" style={{ fontSize: '0.75rem', marginTop: '-4px', marginLeft: '2px', opacity: 0.8 }}>
+                            Spot The Gap. Seize The Spread.
+                        </span>
+                    </div>
+                    <span className="version-badge" style={{ alignSelf: 'flex-start', marginTop: '4px' }}>v2.0</span>
                 </div>
                 <div className="app-header-right">
                     <button
@@ -50,19 +70,26 @@ export default function DashboardPage() {
                         style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: "6px",
-                            backgroundColor: "rgba(0, 195, 247, 0.15)",
+                            gap: "8px",
+                            backgroundColor: "rgba(0, 195, 247, 0.12)",
                             border: "1px solid rgba(0, 195, 247, 0.4)",
                             color: "#00C3F7",
-                            padding: "6px 12px",
+                            padding: "6px 14px",
                             borderRadius: "8px",
-                            fontSize: "0.8rem",
+                            fontSize: "0.82rem",
                             fontWeight: 600,
                             cursor: "pointer",
-                            transition: "all 0.2s ease"
+                            transition: "all 0.2s ease",
+                            boxShadow: "0 0 12px rgba(0, 195, 247, 0.15)"
                         }}
                     >
-                        💳 Top Up M-PESA
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="2" y="4" width="20" height="16" rx="3.5" stroke="currentColor" strokeWidth="1.8" fill="rgba(0, 195, 247, 0.08)"/>
+                            <path d="M2 9H22" stroke="currentColor" strokeWidth="1.5" opacity="0.6"/>
+                            <circle cx="17.5" cy="14.5" r="2" fill="#10B981" />
+                            <path d="M6 14.5H11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.8"/>
+                        </svg>
+                        <span>Top Up M-PESA</span>
                     </button>
                     <div className="connection-status" id="connection-status">
                         <span
@@ -115,7 +142,7 @@ export default function DashboardPage() {
             </div>
 
             {/* ── Live Spread Grid ── */}
-            <SpreadGrid spreads={spreads} title="Live Arbitrage Spreads" />
+            <SpreadGrid spreads={allAlerts} title="Live Arbitrage Spreads" />
 
             {/* ── Alert History ── */}
             <AlertLog alerts={allAlerts.slice(0, 100)} />
@@ -133,8 +160,17 @@ export default function DashboardPage() {
                     <p className="footer-brand">
                         <span className="footer-logo-text">MigiArbitrage</span>
                         <span className="footer-flag">🇰🇪</span>
-                        <span className="footer-tagline">Real-Time Crypto Arbitrage Intelligence · Nairobi, Kenya</span>
+                        <span className="footer-tagline">Spot The Gap. Seize The Spread. · Nairobi, Kenya</span>
                     </p>
+                    <div className="footer-support-wrap">
+                        <a href="mailto:migiarbitrage@gmail.com" className="footer-support-link">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <rect width="20" height="16" x="2" y="4" rx="2"/>
+                                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                            </svg>
+                            <span>Support: migiarbitrage@gmail.com</span>
+                        </a>
+                    </div>
                     <p className="footer-disclaimer">
                         ⚠ Semi-automated mode — manual payment confirmation required for P2P trades. No funds are moved without user action.
                     </p>

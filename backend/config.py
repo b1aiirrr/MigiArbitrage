@@ -96,6 +96,21 @@ WS_ALLOWED_ORIGINS: list[str] = [
 ]
 
 # ──────────────────────────────────────────────
+#  Webhook Security
+# ──────────────────────────────────────────────
+# Paystack secret key (NOT public key) — used to verify webhook signatures.
+PAYSTACK_SECRET_KEY: str = os.getenv("PAYSTACK_SECRET_KEY", "")
+
+# Safaricom Daraja does not sign IPN payloads. We use a shared secret
+# passed via the `secret` query param or `X-Webhook-Secret` header.
+SAFARICOM_WEBHOOK_SECRET: str = os.getenv("SAFARICOM_WEBHOOK_SECRET", "")
+
+# Optional: restrict Safaricom webhook to specific source IPs (comma-separated).
+SAFARICOM_ALLOWED_IPS: list[str] = [
+    ip.strip() for ip in os.getenv("SAFARICOM_ALLOWED_IPS", "").split(",") if ip.strip()
+]
+
+# ──────────────────────────────────────────────
 #  Monitored Spot Trading Pairs
 # ──────────────────────────────────────────────
 SPOT_SYMBOLS: list[str] = [
@@ -139,7 +154,7 @@ WITHDRAWAL_FEES: dict = {
 }
 
 PREFERRED_NETWORKS: dict = {
-    "BTC": "BTC", "ETH": "ARB", "SOL": "SOL", "XRP": "XRP",
+    "BTC": "BEP20", "ETH": "ARB", "SOL": "SOL", "XRP": "XRP",
     "ADA": "ADA", "DOGE": "DOGE", "AVAX": "AVAX", "LINK": "ARB",
     "USDT": "TRC20", "BNB": "BEP20", "MATIC": "POLYGON",
     "DOT": "DOT", "NEAR": "NEAR",
@@ -238,14 +253,30 @@ P2P_PAYMENT_MAP: dict = {
 #  Triangular Arbitrage Configuration
 # ──────────────────────────────────────────────
 TRIANGULAR_ENABLED: bool = os.getenv("TRIANGULAR_ENABLED", "true").lower() == "true"
-TRIANGULAR_EXCHANGES: list[str] = ["binance", "okx", "kucoin"]
+TRIANGULAR_EXCHANGES: list[str] = ["binance", "okx", "mexc", "kucoin"]
+
+# Cross pairs (BTC/ETH-quoted) required to close triangular cycles.
+# These are subscribed ONLY on TRIANGULAR_EXCHANGES to limit memory load,
+# because a triangle needs a non-USDT leg (e.g. ETH/BTC) to complete.
+TRIANGULAR_SYMBOLS: list[str] = [
+    "ETH/BTC", "SOL/BTC", "BNB/BTC", "XRP/BTC", "ADA/BTC",
+    "DOGE/BTC", "AVAX/BTC", "DOT/BTC", "LINK/BTC", "NEAR/BTC",
+    "SOL/ETH",
+]
 TRIANGULAR_PATHS: list[list[str]] = [
-    # Each path: [start_sym, mid_sym, end_sym]
-    # KES → USDT → BTC → KES
-    ["KES/USDT", "BTC/USDT", "BTC/KES"],
-    # USDT → BTC → ETH → USDT
+    # Each path: [start_sym, mid_sym, end_sym] — all three legs must be watched.
+    # USDT → BTC → ${ALT} → USDT
     ["BTC/USDT", "ETH/BTC", "ETH/USDT"],
-    # USDT → ETH → SOL → USDT (via intermediate)
+    ["BTC/USDT", "SOL/BTC", "SOL/USDT"],
+    ["BTC/USDT", "BNB/BTC", "BNB/USDT"],
+    ["BTC/USDT", "XRP/BTC", "XRP/USDT"],
+    ["BTC/USDT", "ADA/BTC", "ADA/USDT"],
+    ["BTC/USDT", "DOGE/BTC", "DOGE/USDT"],
+    ["BTC/USDT", "AVAX/BTC", "AVAX/USDT"],
+    ["BTC/USDT", "DOT/BTC", "DOT/USDT"],
+    ["BTC/USDT", "LINK/BTC", "LINK/USDT"],
+    ["BTC/USDT", "NEAR/BTC", "NEAR/USDT"],
+    # USDT → ETH → ${ALT} → USDT
     ["ETH/USDT", "SOL/ETH", "SOL/USDT"],
 ]
 TRIANGULAR_POLL_INTERVAL: float = float(os.getenv("TRIANGULAR_POLL_INTERVAL", "2"))
@@ -254,8 +285,8 @@ TRIANGULAR_AUTO_DISCOVER: bool = os.getenv("TRIANGULAR_AUTO_DISCOVER", "true").l
 # ──────────────────────────────────────────────
 #  Scanner Thresholds
 # ──────────────────────────────────────────────
-MIN_NET_PROFIT_USD: float = float(os.getenv("MIN_NET_PROFIT_USD", "0.50"))
-MIN_P2P_PROFIT_KES: float = float(os.getenv("MIN_P2P_PROFIT_KES", "100"))
+MIN_NET_PROFIT_USD: float = float(os.getenv("MIN_NET_PROFIT_USD", "0.05"))
+MIN_P2P_PROFIT_KES: float = float(os.getenv("MIN_P2P_PROFIT_KES", "50"))
 MAX_CAPITAL_USD: float = float(os.getenv("MAX_CAPITAL_USD", "1000"))
 SCAN_INTERVAL_MS: int = int(os.getenv("SCAN_INTERVAL_MS", "500"))
 ORDER_BOOK_DEPTH: int = 20

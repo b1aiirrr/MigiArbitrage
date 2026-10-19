@@ -28,6 +28,9 @@ from config import (
     EXCHANGE_FEES,
     WITHDRAWAL_FEES,
     SPOT_SYMBOLS,
+    TRIANGULAR_ENABLED,
+    TRIANGULAR_EXCHANGES,
+    TRIANGULAR_SYMBOLS,
     ORDER_BOOK_DEPTH,
     MEMORY_LIMIT_MB,
     MEMORY_CHECK_INTERVAL,
@@ -122,6 +125,7 @@ class CCXTEngine:
                     "enableRateLimit": True,
                     "options": {
                         "defaultType": "spot",
+                        "fetchCurrencies": False,
                         "watchOrderBook": {"limit": ORDER_BOOK_DEPTH},
                     },
                 }
@@ -144,8 +148,18 @@ class CCXTEngine:
     async def _exchange_websocket_loop(self, ex_id: str) -> None:
         """Wrapper to watch all symbols for a specific exchange."""
         exchange = self._exchanges[ex_id]
+
+        # Base spot symbols watched on every exchange.
+        symbols = list(SPOT_SYMBOLS)
+
+        # Triangular cycles need a non-USDT cross leg (e.g. ETH/BTC), so we
+        # subscribe the extra cross pairs only on the triangular exchanges to
+        # keep memory usage bounded on the 1 vCPU / 2 GB target.
+        if TRIANGULAR_ENABLED and ex_id in TRIANGULAR_EXCHANGES:
+            symbols += [s for s in TRIANGULAR_SYMBOLS if s not in symbols]
+
         tasks = []
-        for symbol in SPOT_SYMBOLS:
+        for symbol in symbols:
             task = asyncio.create_task(
                 self._watch_orderbook(ex_id, exchange, symbol),
                 name=f"ob-{ex_id}-{symbol}",
@@ -182,7 +196,19 @@ class CCXTEngine:
             try:
                 # Check if exchange supports this symbol
                 if not exchange.markets:
-                    await exchange.load_markets()
+                    try:
+                        await exchange.load_markets()
+                    except ccxt.AuthenticationError as auth_err:
+                        logger.warning(
+                            "[%s] API credentials invalid (%s) — switching to public mode for order book stream",
+                            ex_id, auth_err,
+                        )
+                        exchange.apiKey = None
+                        exchange.secret = None
+                        exchange.password = None
+                        if hasattr(exchange, "options"):
+                            exchange.options["fetchCurrencies"] = False
+                        await exchange.load_markets()
 
                 if symbol not in exchange.markets:
                     logger.debug("[%s] %s not listed, skipping", ex_id, symbol)

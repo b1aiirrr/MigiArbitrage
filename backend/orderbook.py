@@ -15,8 +15,8 @@ from typing import Optional
 
 
 # ── Configuration ─────────────────────────────
-MAX_STALENESS_MS: float = 500.0   # Sub-second freshness gate for scanners
-HARD_STALE_MS: float = 10_000.0   # 10s — book is completely invalid
+MAX_STALENESS_MS: float = 3000.0  # 3.0s freshness gate for cross-exchange cloud scanning
+HARD_STALE_MS: float = 30_000.0   # 30s — allows cross pairs to remain valid between trades
 
 
 class OrderBookLevel:

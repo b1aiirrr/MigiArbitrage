@@ -202,6 +202,8 @@ async def main() -> None:
     async def on_p2p_spread(opp_dict):
         await ws_server.broadcast_spread(opp_dict)
         await alerter.send_any_opportunity(opp_dict)
+        if EXECUTOR_ENABLED:
+            await executor.execute_opportunity(opp_dict)
 
     p2p_scanner = P2PScanner(on_spread=on_p2p_spread)
 
@@ -209,9 +211,12 @@ async def main() -> None:
     async def on_tri_spread(opp_dict):
         await ws_server.broadcast_spread(opp_dict)
         await alerter.send_any_opportunity(opp_dict)
+        if EXECUTOR_ENABLED:
+            await executor.execute_opportunity(opp_dict)
 
     tri_scanner = TriangularScanner(
         book_manager=book_manager,
+        ccxt_engine=ccxt_engine,
         on_spread=on_tri_spread,
     )
 

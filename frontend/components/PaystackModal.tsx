@@ -46,7 +46,7 @@ export default function PaystackModal({ isOpen, onClose }: PaystackModalProps) {
             }
 
             const numAmount = Math.max(1, parseFloat(amount) || 10);
-            const userEmail = email.trim() || `user_${Date.now()}@migiarbitrage.com`;
+            const userEmail = email.trim() || "migiarbitrage@gmail.com";
             const ref = `MIGI_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
             const paystack = new window.PaystackPop();
@@ -111,13 +111,20 @@ export default function PaystackModal({ isOpen, onClose }: PaystackModalProps) {
 
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
                     <div style={{
-                        width: "36px", height: "36px",
-                        borderRadius: "8px",
-                        backgroundColor: "#00C3F7",
+                        width: "40px", height: "40px",
+                        borderRadius: "10px",
+                        background: "linear-gradient(135deg, rgba(0, 195, 247, 0.2), rgba(16, 185, 129, 0.2))",
+                        border: "1px solid rgba(0, 195, 247, 0.4)",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontWeight: 800, color: "#fff", fontSize: "16px"
+                        color: "#00C3F7",
+                        boxShadow: "0 0 16px rgba(0, 195, 247, 0.25)"
                     }}>
-                        P
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="4" width="18" height="16" rx="3.5" stroke="#00C3F7" strokeWidth="2" fill="rgba(0, 195, 247, 0.1)"/>
+                            <path d="M3 9.5H21" stroke="#00C3F7" strokeWidth="1.5" opacity="0.6"/>
+                            <circle cx="16.5" cy="14.5" r="2" fill="#10B981" />
+                            <path d="M7 14.5H11" stroke="#00C3F7" strokeWidth="1.6" strokeLinecap="round"/>
+                        </svg>
                     </div>
                     <div>
                         <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>M-PESA / Card Deposit</h3>

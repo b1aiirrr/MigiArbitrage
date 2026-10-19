@@ -22,8 +22,17 @@ node_modules/
 out/
 .vercel
 
-# ── Docker ──
+# ── Archives & Executables ──
+*.zip
+*.exe
+*.pdf
+
+# ── Logs & Temporary ──
+*logs/
+*logs*/
 *.log
+backend/.azure/
+backend/_test_*.py
 
 # ── IDE ──
 .vscode/
@@ -33,3 +42,4 @@ out/
 *~
 .DS_Store
 Thumbs.db
+

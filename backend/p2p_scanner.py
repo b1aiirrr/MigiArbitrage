@@ -156,102 +156,122 @@ class P2PScanner:
             await asyncio.sleep(P2P_POLL_INTERVAL)
 
     async def _scan_p2p(self) -> None:
-        """Fetch P2P ads from all exchanges and evaluate spreads."""
+        """Fetch P2P ads from all exchanges and evaluate real bid/ask spreads."""
         tasks = [self._fetch_ads(ex) for ex in P2P_EXCHANGES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        all_sell_ads: list[P2PAdvert] = []
+        all_ads: list[P2PAdvert] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.warning("P2P fetch failed for %s: %s", P2P_EXCHANGES[i], result)
                 continue
-            all_sell_ads.extend(result)
+            all_ads.extend(result)
 
-        if not all_sell_ads:
+        if not all_ads:
             return
 
-        # For each sell ad, calculate if buying USDT on spot + selling P2P is profitable
-        for ad in all_sell_ads:
-            if ad.side != "sell":
+        # side == "sell" → advertiser sells USDT → we BUY USDT (ask)
+        # side == "buy"  → advertiser buys USDT  → we SELL USDT (bid)
+        ask_ads = [a for a in all_ads if a.side == "sell"]
+        bid_ads = [a for a in all_ads if a.side == "buy"]
+        if not ask_ads or not bid_ads:
+            return
+
+        # Spatial arbitrage: buy USDT at the cheapest ask, sell at the best bid.
+        # We evaluate per payment method so the two legs are settleable.
+        for pm_key, pm_cfg in PAYMENT_METHODS.items():
+            pm_asks = [a for a in ask_ads if pm_key in a.payment_methods]
+            pm_bids = [a for a in bid_ads if pm_key in a.payment_methods]
+            if not pm_asks or not pm_bids:
                 continue
-            for pm_key in ad.payment_methods:
-                pm_cfg = PAYMENT_METHODS.get(pm_key)
-                if not pm_cfg:
-                    continue
-                await self._evaluate_p2p_spread(ad, pm_key, pm_cfg)
+
+            cheapest_ask = min(pm_asks, key=lambda a: a.price)
+            best_bid = max(pm_bids, key=lambda a: a.price)
+
+            # No edge if the best place to sell isn't above the cheapest place to buy.
+            if best_bid.price <= cheapest_ask.price:
+                continue
+
+            await self._evaluate_p2p_spread(cheapest_ask, best_bid, pm_key, pm_cfg)
 
     async def _evaluate_p2p_spread(
-        self, ad: P2PAdvert, pm_key: str, pm_cfg: dict
+        self, ask_ad: P2PAdvert, bid_ad: P2PAdvert, pm_key: str, pm_cfg: dict
     ) -> None:
         """
-        Evaluate a single P2P spread opportunity.
-        We buy USDT at ~$1 on spot → transfer → sell on P2P for KES.
-        """
-        usdt_buy_price = 1.0  # USDT is roughly $1 on spot
-        sell_price_kes = ad.price  # KES per USDT on P2P
+        Evaluate a P2P spatial spread.
 
-        volume = min(ad.available, ad.max_amount, MAX_CAPITAL_USD)  # Cap by MAX_CAPITAL_USD
-        if volume < max(ad.min_amount, 10):
+        Strategy: buy USDT on P2P at the lowest ask (KES/USDT), then sell it
+        on P2P at the highest bid (KES/USDT). Profit is the rate differential
+        net of fees/risk, not a fabricated $1.00 cost basis.
+        """
+        buy_rate = ask_ad.price    # KES per USDT we pay
+        sell_rate = bid_ad.price   # KES per USDT we receive
+
+        volume = min(
+            ask_ad.available, ask_ad.max_amount,
+            bid_ad.available, bid_ad.max_amount,
+            MAX_CAPITAL_USD,
+        )
+        if volume < max(ask_ad.min_amount, bid_ad.min_amount, 10):
             return
 
-        # ── Fees ──
-        fee_spot = volume * 0.001  # Taker fee buying USDT on spot
+        # ── Gross spread in KES ──
+        gross_kes = volume * (sell_rate - buy_rate)
 
+        # Payment-method risk buffer (chargebacks etc.) expressed in KES
+        fee_risk = volume * (pm_cfg["margin_pct"] / 100.0) * buy_rate
+
+        # Cross-exchange transfer cost: only if the two legs are on different
+        # exchanges. Same-exchange P2P needs no on-chain movement.
+        same_exchange = ask_ad.exchange == bid_ad.exchange
         network = PREFERRED_NETWORKS.get("USDT", "TRC20")
-        fee_withdrawal_units = WITHDRAWAL_FEES.get("USDT", {}).get(network, 1.0)
-        fee_withdrawal = fee_withdrawal_units  # In USDT
+        fee_withdrawal_units = 0.0 if same_exchange else WITHDRAWAL_FEES.get("USDT", {}).get(network, 1.0)
+        fee_withdrawal_kes = fee_withdrawal_units * buy_rate
 
-        # Margin/risk fee for this payment method
-        risk_margin = pm_cfg["margin_pct"] / 100.0
-        fee_risk = volume * risk_margin
-
-        # ── Net profit in KES ──
-        net_usdt = volume - fee_spot - fee_withdrawal - fee_risk
-        revenue_kes = net_usdt * sell_price_kes
-        cost_kes = volume * sell_price_kes  # What we "would" get at face value
-        # True cost: USDT bought at $1 * KES_rate - fees
-        cost_usd = volume * usdt_buy_price + fee_spot + fee_withdrawal
-        net_profit_kes = revenue_kes - (cost_usd * sell_price_kes)
-        net_profit_usd = net_profit_kes / sell_price_kes if sell_price_kes > 0 else 0
-
+        net_profit_kes = gross_kes - fee_risk - fee_withdrawal_kes
         if net_profit_kes < MIN_P2P_PROFIT_KES:
             return
 
-        margin_pct = (net_profit_kes / (cost_usd * sell_price_kes)) * 100 if cost_usd > 0 else 0
+        mid_rate = (buy_rate + sell_rate) / 2.0
+        net_profit_usd = net_profit_kes / mid_rate if mid_rate > 0 else 0.0
+        margin_pct = (net_profit_kes / (volume * buy_rate)) * 100 if buy_rate > 0 else 0.0
 
-        # Transfer time estimate
-        transfer_times = {"TRC20": "~3 min", "ARB": "~1 min", "SOL": "~30 sec", "OP": "~2 min"}
-        transfer_time = transfer_times.get(network, "~5 min")
+        if same_exchange:
+            transfer_time = "instant (same exchange)"
+        else:
+            transfer_times = {"TRC20": "~3 min", "ARB": "~1 min", "SOL": "~30 sec", "OP": "~2 min"}
+            transfer_time = f"{transfer_times.get(network, '~5 min')} ({network})"
 
         opportunity = P2PSpreadOpportunity(
             pair=f"{P2P_CRYPTO}/{P2P_FIAT}",
-            buy_exchange="spot",
-            sell_exchange=ad.exchange,
-            buy_price_usd=usdt_buy_price,
-            sell_price_kes=sell_price_kes,
+            buy_exchange=ask_ad.exchange,
+            sell_exchange=bid_ad.exchange,
+            buy_price_usd=buy_rate,
+            sell_price_kes=sell_rate,
             volume=volume,
             payment_method=pm_key,
             payment_label=pm_cfg["label"],
             risk_level=pm_cfg["risk_level"],
             margin_pct=margin_pct,
-            fee_spot=fee_spot,
-            fee_withdrawal=fee_withdrawal,
-            fee_network=0.0,
+            fee_spot=0.0,
+            fee_withdrawal=fee_withdrawal_units,
+            fee_network=fee_withdrawal_kes,
             net_profit_kes=net_profit_kes,
             net_profit_usd=net_profit_usd,
-            advertiser=ad.advertiser,
-            advertiser_rate=ad.completion_rate,
-            advertiser_trades=ad.trade_count,
-            transfer_time_est=f"{transfer_time} ({network})",
+            advertiser=bid_ad.advertiser,
+            advertiser_rate=bid_ad.completion_rate,
+            advertiser_trades=bid_ad.trade_count,
+            transfer_time_est=transfer_time,
             timestamp=time.time(),
         )
 
         logger.info(
-            "💱 P2P spread: %s %s | Sell %s@KES%.2f | %s | "
-            "Risk=%s | Net=KES%.0f ($%.2f)",
-            P2P_CRYPTO, pm_cfg["label"], ad.exchange, ad.price,
-            f"Vol={volume:.0f}", pm_cfg["risk_level"],
-            net_profit_kes, net_profit_usd,
+            "💱 P2P spread [%s]: buy @%.2f (%s) → sell @%.2f (%s) | %s | "
+            "Vol=%.0f | Risk=%s | Net=KES%.0f ($%.2f)",
+            pm_cfg["label"],
+            buy_rate, ask_ad.exchange, sell_rate, bid_ad.exchange,
+            f"{'same-ex' if same_exchange else 'cross-ex'}",
+            volume, pm_cfg["risk_level"], net_profit_kes, net_profit_usd,
         )
 
         if self.on_spread:
@@ -260,26 +280,35 @@ class P2PScanner:
         self._opportunity_count += 1
 
     async def _fetch_ads(self, exchange: str) -> list[P2PAdvert]:
-        """Fetch P2P sell ads from exchange REST API."""
+        """Fetch BOTH buy and sell P2P ads from an exchange REST API."""
+        ads: list[P2PAdvert] = []
         if exchange == "binance":
-            return await self._fetch_binance_p2p()
+            ads += await self._fetch_binance_p2p("SELL")  # we buy USDT
+            ads += await self._fetch_binance_p2p("BUY")   # we sell USDT
         elif exchange == "okx":
-            return await self._fetch_okx_p2p()
+            ads += await self._fetch_okx_p2p("sell")      # we buy USDT
+            ads += await self._fetch_okx_p2p("buy")       # we sell USDT
         elif exchange == "bybit":
-            return await self._fetch_bybit_p2p()
-        return []
+            ads += await self._fetch_bybit_p2p("1")       # side 1 = advertiser sells → we buy
+            ads += await self._fetch_bybit_p2p("0")       # side 0 = advertiser buys  → we sell
+        return ads
 
-    async def _fetch_binance_p2p(self) -> list[P2PAdvert]:
-        """Fetch Binance P2P ads for KES/USDT."""
+    async def _fetch_binance_p2p(self, trade_type: str) -> list[P2PAdvert]:
+        """Fetch Binance P2P ads for KES/USDT.
+
+        trade_type "SELL" → advertiser sells USDT (we buy) → side="sell".
+        trade_type "BUY"  → advertiser buys USDT  (we sell) → side="buy".
+        """
         url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
         payload = {
             "fiat": P2P_FIAT,
             "page": 1,
             "rows": 20,
-            "tradeType": "SELL",  # We want to find people selling USDT for KES
+            "tradeType": trade_type,
             "asset": P2P_CRYPTO,
             "publisherType": None,
         }
+        side = "sell" if trade_type == "SELL" else "buy"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -292,12 +321,12 @@ class P2PScanner:
                         return []
                     data = await resp.json()
                     ads = data.get("data", [])
-                    return self._parse_binance_ads(ads)
+                    return self._parse_binance_ads(ads, side)
         except Exception as exc:
             logger.error("[binance-p2p] Fetch failed: %s", exc)
             return []
 
-    def _parse_binance_ads(self, ads: list) -> list[P2PAdvert]:
+    def _parse_binance_ads(self, ads: list, side: str) -> list[P2PAdvert]:
         """Parse Binance P2P response into P2PAdvert list."""
         result = []
         for item in ads:
@@ -318,7 +347,7 @@ class P2PScanner:
 
             result.append(P2PAdvert(
                 exchange="binance",
-                side="sell",
+                side=side,
                 price=float(adv.get("price", 0)),
                 min_amount=float(adv.get("minSingleTransAmount", 0)),
                 max_amount=float(adv.get("maxSingleTransAmount", 0)),
@@ -331,13 +360,13 @@ class P2PScanner:
             ))
         return result
 
-    async def _fetch_okx_p2p(self) -> list[P2PAdvert]:
-        """Fetch OKX P2P ads. Uses OKX C2C API."""
+    async def _fetch_okx_p2p(self, side: str) -> list[P2PAdvert]:
+        """Fetch OKX P2P ads. Uses OKX C2C API. side in {"sell","buy"}."""
         url = "https://www.okx.com/v3/c2c/tradingOrders/books"
         params = {
             "quoteCurrency": P2P_FIAT.lower(),
             "baseCurrency": P2P_CRYPTO.lower(),
-            "side": "sell",
+            "side": side,
             "paymentMethod": "all",
             "userType": "all",
             "showTrade": "false",
@@ -355,12 +384,13 @@ class P2PScanner:
                     if resp.status != 200:
                         return []
                     data = await resp.json()
-                    return self._parse_okx_ads(data.get("data", {}).get("sell", []))
+                    ads = data.get("data", {}).get(side, [])
+                    return self._parse_okx_ads(ads, side)
         except Exception as exc:
             logger.error("[okx-p2p] Fetch failed: %s", exc)
             return []
 
-    def _parse_okx_ads(self, ads: list) -> list[P2PAdvert]:
+    def _parse_okx_ads(self, ads: list, side: str) -> list[P2PAdvert]:
         """Parse OKX P2P response."""
         result = []
         for item in ads:
@@ -375,7 +405,7 @@ class P2PScanner:
 
             result.append(P2PAdvert(
                 exchange="okx",
-                side="sell",
+                side=side,
                 price=float(item.get("price", 0)),
                 min_amount=float(item.get("quoteMinAmountPerOrder", 0)),
                 max_amount=float(item.get("quoteMaxAmountPerOrder", 0)),
@@ -388,16 +418,17 @@ class P2PScanner:
             ))
         return result
 
-    async def _fetch_bybit_p2p(self) -> list[P2PAdvert]:
-        """Fetch Bybit P2P ads."""
+    async def _fetch_bybit_p2p(self, side: str) -> list[P2PAdvert]:
+        """Fetch Bybit P2P ads. side "1" = advertiser sells (we buy), "0" = advertiser buys (we sell)."""
         url = "https://api2.bybit.com/fiat/otc/item/online"
         payload = {
             "tokenId": P2P_CRYPTO,
             "currencyId": P2P_FIAT,
-            "side": "1",  # 1 = sell
+            "side": side,
             "size": "20",
             "page": "1",
         }
+        internal_side = "sell" if side == "1" else "buy"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -409,12 +440,13 @@ class P2PScanner:
                     if resp.status != 200:
                         return []
                     data = await resp.json()
-                    return self._parse_bybit_ads(data.get("result", {}).get("items", []))
+                    items = data.get("result", {}).get("items", [])
+                    return self._parse_bybit_ads(items, internal_side)
         except Exception as exc:
             logger.error("[bybit-p2p] Fetch failed: %s", exc)
             return []
 
-    def _parse_bybit_ads(self, ads: list) -> list[P2PAdvert]:
+    def _parse_bybit_ads(self, ads: list, side: str) -> list[P2PAdvert]:
         """Parse Bybit P2P response."""
         result = []
         for item in ads:
@@ -430,7 +462,7 @@ class P2PScanner:
 
             result.append(P2PAdvert(
                 exchange="bybit",
-                side="sell",
+                side=side,
                 price=float(item.get("price", 0)),
                 min_amount=float(item.get("minAmount", 0)),
                 max_amount=float(item.get("maxAmount", 0)),

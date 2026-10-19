@@ -175,10 +175,13 @@ class ArbitrageScanner:
 
     async def _scan_all(self) -> None:
         for symbol in SPOT_SYMBOLS:
-            # Use fresh_books_for_symbol to auto-filter stale data
+            # Use fresh_books_for_symbol (sub-3s) to auto-filter stale data
             books = self.book_manager.fresh_books_for_symbol(symbol)
             if len(books) < 2:
-                continue
+                # Fallback to any valid book within 6s so network jitter doesn't silence scanner
+                books = [b for b in self.book_manager.all_books_for_symbol(symbol) if b.staleness_ms < 6000.0]
+                if len(books) < 2:
+                    continue
             for book_a, book_b in itertools.combinations(books, 2):
                 await self._evaluate_spread(symbol, book_a, book_b)
                 await self._evaluate_spread(symbol, book_b, book_a)
@@ -188,10 +191,10 @@ class ArbitrageScanner:
     async def _evaluate_spread(
         self, symbol: str, buy_book: OrderBook, sell_book: OrderBook
     ) -> None:
-        # ── Step 1: Staleness gate ──
+        # ── Step 1: Staleness gate (6s maximum age) ──
         buy_age = buy_book.staleness_ms
         sell_age = sell_book.staleness_ms
-        if buy_age > MAX_STALENESS_MS or sell_age > MAX_STALENESS_MS:
+        if buy_age > 6000.0 or sell_age > 6000.0:
             self._stale_skips += 1
             return
 

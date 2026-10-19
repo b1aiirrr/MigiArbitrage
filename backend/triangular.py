@@ -25,8 +25,10 @@ from config import (
     TRIANGULAR_ENABLED,
     TRIANGULAR_EXCHANGES,
     TRIANGULAR_PATHS,
+    TRIANGULAR_SYMBOLS,
     TRIANGULAR_POLL_INTERVAL,
     TRIANGULAR_AUTO_DISCOVER,
+    SPOT_SYMBOLS,
     EXCHANGE_FEES,
     MIN_NET_PROFIT_USD,
     MAX_CAPITAL_USD,
@@ -35,6 +37,11 @@ from orderbook import OrderBookManager
 from tri_graph import discover_triangles_for_exchange
 
 logger = logging.getLogger("migi.triangular")
+
+# Only triangles whose every leg is actually subscribed to the order book
+# manager can be evaluated. Any discovered path referencing an unwatched
+# symbol would short-circuit in _evaluate_triangle, so we drop those upfront.
+WATCHED_SYMBOLS: set[str] = set(SPOT_SYMBOLS) | set(TRIANGULAR_SYMBOLS)
 
 
 @dataclass
@@ -60,7 +67,7 @@ class TriangularOpportunity:
 
     def to_dict(self) -> dict:
         return {
-            "pair": " → ".join(self.path),
+            "pair": " -> ".join(self.path),
             "arb_type": self.arb_type,
             "buy_exchange": self.exchange,
             "sell_exchange": self.exchange,
@@ -86,6 +93,61 @@ class TriangularOpportunity:
             ],
             "timestamp": self.timestamp,
         }
+
+
+def resolve_triangular_cycles(pairs: list[str]) -> list[list[dict]]:
+    """
+    Given 3 pairs, resolve the 2 directional 3-hop cycles (forward & reverse).
+    Each cycle is a list of 3 steps:
+      {'from': curr1, 'to': curr2, 'pair': pair, 'side': 'buy'|'sell'}
+    Cycles start from a prioritized currency: USDT, USDC, USD, BTC, ETH.
+    """
+    if len(pairs) != 3:
+        return []
+
+    # Map quote -> base ("buy") and base -> quote ("sell")
+    edges: dict[str, list[tuple[str, str, str]]] = {}
+    for p in pairs:
+        if "/" not in p:
+            return []
+        base, quote = p.split("/")
+        edges.setdefault(quote, []).append((base, p, "buy"))
+        edges.setdefault(base, []).append((quote, p, "sell"))
+
+    all_assets = list(edges.keys())
+    if len(all_assets) != 3:
+        return []
+
+    # Choose best starting asset: prioritize USDT -> USDC -> USD -> BTC -> ETH
+    preferred = ("USDT", "USDC", "USD", "BTC", "ETH")
+    start_asset = all_assets[0]
+    for pref in preferred:
+        if pref in edges:
+            start_asset = pref
+            break
+
+    # Discover the 2 directed cycles starting from start_asset
+    found_cycles: list[list[dict]] = []
+    seen_directions: set[tuple[str, str, str]] = set()
+
+    for mid, p1, s1 in edges.get(start_asset, []):
+        for end, p2, s2 in edges.get(mid, []):
+            if p2 == p1 or end == start_asset:
+                continue
+            for final, p3, s3 in edges.get(end, []):
+                if p3 in (p1, p2) or final != start_asset:
+                    continue
+
+                sig = (p1, p2, p3)
+                if sig not in seen_directions:
+                    seen_directions.add(sig)
+                    found_cycles.append([
+                        {"from": start_asset, "to": mid, "pair": p1, "side": s1},
+                        {"from": mid, "to": end, "pair": p2, "side": s2},
+                        {"from": end, "to": start_asset, "pair": p3, "side": s3},
+                    ])
+
+    return found_cycles
 
 
 class TriangularScanner:
@@ -164,14 +226,28 @@ class TriangularScanner:
 
             try:
                 if not exchange.markets:
-                    await exchange.load_markets()
+                    try:
+                        await exchange.load_markets()
+                    except Exception:
+                        exchange.apiKey = None
+                        exchange.secret = None
+                        exchange.password = None
+                        if hasattr(exchange, "options"):
+                            exchange.options["fetchCurrencies"] = False
+                        await exchange.load_markets()
 
                 paths = discover_triangles_for_exchange(exchange.markets)
-                self._discovered_paths[exchange_id] = paths
+                # Keep only triangles whose legs are all subscribed, otherwise
+                # they can never be evaluated (missing order books).
+                valid_paths = [p for p in paths if all(leg in WATCHED_SYMBOLS for leg in p)]
+                if not valid_paths:
+                    valid_paths = [p for p in TRIANGULAR_PATHS if all(leg in WATCHED_SYMBOLS for leg in p)]
+
+                self._discovered_paths[exchange_id] = valid_paths
 
                 logger.info(
                     "🔺 [%s] Discovered %d triangular paths (was %d hardcoded)",
-                    exchange_id, len(paths), len(TRIANGULAR_PATHS),
+                    exchange_id, len(valid_paths), len(TRIANGULAR_PATHS),
                 )
             except Exception as exc:
                 logger.warning("[%s] Triangle discovery failed: %s", exchange_id, exc)
@@ -204,109 +280,116 @@ class TriangularScanner:
         self, exchange: str, path: list[str], fees: dict
     ) -> None:
         """
-        Evaluate a single triangular path in both forward and reverse directions.
+        Evaluate a single triangular path in both forward and reverse directions
+        with exact buy/sell math and currency conversions.
         """
-        book1 = self.book_manager.get(exchange, path[0])
-        book2 = self.book_manager.get(exchange, path[1])
-        book3 = self.book_manager.get(exchange, path[2])
+        # Ensure all 3 books exist and are valid
+        books = {}
+        for pair in path:
+            b = self.book_manager.get(exchange, pair)
+            if not b or not b.is_valid:
+                return
+            books[pair] = b
 
-        if not (book1 and book1.is_valid and book2 and book2.is_valid and book3 and book3.is_valid):
-            return
-
-        ask1 = book1.best_ask()
-        bid1 = book1.best_bid()
-        ask2 = book2.best_ask()
-        bid2 = book2.best_bid()
-        ask3 = book3.best_ask()
-        bid3 = book3.best_bid()
-
-        if not all([ask1, bid1, ask2, bid2, ask3, bid3]):
+        cycles = resolve_triangular_cycles(path)
+        if not cycles:
             return
 
         taker_fee = fees.get("taker", 0.001)
 
-        # ── Forward path: buy pair1, buy pair2, sell pair3 ──
-        start_amount = MAX_CAPITAL_USD
+        for cycle in cycles:
+            start_asset = cycle[0]["from"]
 
-        step1_amount = (start_amount / ask1.price) * (1 - taker_fee)
-        step2_amount = (step1_amount / ask2.price) * (1 - taker_fee)
-        step3_amount = (step2_amount * bid3.price) * (1 - taker_fee)
+            # Conversion rate to USD for non-USD starting assets
+            asset_to_usd = 1.0
+            if start_asset in ("USDT", "USDC", "USD"):
+                start_amount = MAX_CAPITAL_USD
+            elif start_asset == "BTC":
+                btc_book = self.book_manager.get(exchange, "BTC/USDT")
+                btc_price = btc_book.mid_price() if (btc_book and btc_book.is_valid) else None
+                if not btc_price or btc_price <= 0:
+                    continue
+                asset_to_usd = btc_price
+                start_amount = MAX_CAPITAL_USD / btc_price
+            elif start_asset == "ETH":
+                eth_book = self.book_manager.get(exchange, "ETH/USDT")
+                eth_price = eth_book.mid_price() if (eth_book and eth_book.is_valid) else None
+                if not eth_price or eth_price <= 0:
+                    continue
+                asset_to_usd = eth_price
+                start_amount = MAX_CAPITAL_USD / eth_price
+            else:
+                continue
 
-        profit = step3_amount - start_amount
-        profit_pct = (profit / start_amount) * 100
+            curr_amount = start_amount
+            executed_steps = []
+            cycle_valid = True
 
-        if profit > MIN_NET_PROFIT_USD:
-            total_fee = start_amount * taker_fee * 3
+            for step in cycle:
+                pair = step["pair"]
+                side = step["side"]
+                bk = books[pair]
 
-            opportunity = TriangularOpportunity(
-                exchange=exchange,
-                path=path,
-                step1_pair=path[0],
-                step1_side="buy",
-                step1_price=ask1.price,
-                step2_pair=path[1],
-                step2_side="buy",
-                step2_price=ask2.price,
-                step3_pair=path[2],
-                step3_side="sell",
-                step3_price=bid3.price,
-                volume=start_amount,
-                fee_total=total_fee,
-                net_profit=profit,
-                profit_pct=profit_pct,
-                timestamp=time.time(),
-            )
+                if side == "buy":
+                    ask = bk.best_ask()
+                    if not ask or ask.price <= 0:
+                        cycle_valid = False
+                        break
+                    price = ask.price
+                    curr_amount = (curr_amount / price) * (1 - taker_fee)
+                else:
+                    bid = bk.best_bid()
+                    if not bid or bid.price <= 0:
+                        cycle_valid = False
+                        break
+                    price = bid.price
+                    curr_amount = (curr_amount * price) * (1 - taker_fee)
 
-            logger.info(
-                "🔺 Triangular found: %s on %s | Profit=$%.2f (%.3f%%)",
-                " → ".join(path), exchange, profit, profit_pct,
-            )
+                executed_steps.append({
+                    "pair": pair,
+                    "side": side,
+                    "price": price,
+                })
 
-            if self.on_spread:
-                await self.on_spread(opportunity.to_dict())
+            if not cycle_valid or len(executed_steps) != 3:
+                continue
 
-            self._opportunity_count += 1
+            profit_asset = curr_amount - start_amount
+            profit_pct = (profit_asset / start_amount) * 100
+            net_profit_usd = profit_asset * asset_to_usd
 
-        # ── Reverse path: sell pair3, sell pair2, buy pair1 ──
-        r_start = MAX_CAPITAL_USD
-        r_step1 = (r_start / ask3.price) * (1 - taker_fee)
-        r_step2 = (r_step1 * bid2.price) * (1 - taker_fee)
-        r_step3 = (r_step2 * bid1.price) * (1 - taker_fee)
+            if net_profit_usd > MIN_NET_PROFIT_USD:
+                total_fee = (MAX_CAPITAL_USD * taker_fee * 3)
+                cycle_pairs = [s["pair"] for s in executed_steps]
 
-        r_profit = r_step3 - r_start
-        r_profit_pct = (r_profit / r_start) * 100
+                opportunity = TriangularOpportunity(
+                    exchange=exchange,
+                    path=cycle_pairs,
+                    step1_pair=executed_steps[0]["pair"],
+                    step1_side=executed_steps[0]["side"],
+                    step1_price=executed_steps[0]["price"],
+                    step2_pair=executed_steps[1]["pair"],
+                    step2_side=executed_steps[1]["side"],
+                    step2_price=executed_steps[1]["price"],
+                    step3_pair=executed_steps[2]["pair"],
+                    step3_side=executed_steps[2]["side"],
+                    step3_price=executed_steps[2]["price"],
+                    volume=MAX_CAPITAL_USD,
+                    fee_total=total_fee,
+                    net_profit=net_profit_usd,
+                    profit_pct=profit_pct,
+                    timestamp=time.time(),
+                )
 
-        if r_profit > MIN_NET_PROFIT_USD:
-            total_fee = r_start * taker_fee * 3
+                logger.info(
+                    "🔺 Triangular found: %s on %s | Net=$%.2f (%.3f%%)",
+                    " -> ".join(cycle_pairs), exchange, net_profit_usd, profit_pct,
+                )
 
-            opportunity = TriangularOpportunity(
-                exchange=exchange,
-                path=list(reversed(path)),
-                step1_pair=path[2],
-                step1_side="buy",
-                step1_price=ask3.price,
-                step2_pair=path[1],
-                step2_side="sell",
-                step2_price=bid2.price,
-                step3_pair=path[0],
-                step3_side="sell",
-                step3_price=bid1.price,
-                volume=r_start,
-                fee_total=total_fee,
-                net_profit=r_profit,
-                profit_pct=r_profit_pct,
-                timestamp=time.time(),
-            )
+                if self.on_spread:
+                    await self.on_spread(opportunity.to_dict())
 
-            logger.info(
-                "🔺 Triangular (reverse) found: %s on %s | Profit=$%.2f (%.3f%%)",
-                " → ".join(reversed(path)), exchange, r_profit, r_profit_pct,
-            )
-
-            if self.on_spread:
-                await self.on_spread(opportunity.to_dict())
-
-            self._opportunity_count += 1
+                self._opportunity_count += 1
 
     def stop(self) -> None:
         self._running = False

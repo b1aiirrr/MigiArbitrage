@@ -7,6 +7,8 @@ Handles Azure Health Probes and Webhook API using aiohttp.web.
 
 from __future__ import annotations
 import asyncio
+import hashlib
+import hmac
 import logging
 import time
 from collections import deque
@@ -16,7 +18,10 @@ import orjson
 import aiohttp
 from aiohttp import web
 
-from config import WS_SERVER_HOST, WS_SERVER_PORT, ALERT_HISTORY_SIZE, WS_ALLOWED_ORIGINS
+from config import (
+    WS_SERVER_HOST, WS_SERVER_PORT, ALERT_HISTORY_SIZE, WS_ALLOWED_ORIGINS,
+    PAYSTACK_SECRET_KEY, SAFARICOM_WEBHOOK_SECRET, SAFARICOM_ALLOWED_IPS,
+)
 
 logger = logging.getLogger("migi.wsserver")
 
@@ -50,6 +55,23 @@ class DashboardWSServer:
 
     async def coop_webhook(self, request: web.Request) -> web.Response:
         try:
+            # ── IP allowlist (if configured) ──
+            if SAFARICOM_ALLOWED_IPS:
+                client_ip = request.remote or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+                if client_ip not in SAFARICOM_ALLOWED_IPS:
+                    logger.warning("Rejected Safaricom webhook from unauthorised IP: %s", client_ip)
+                    return web.json_response({"ResultCode": 1, "ResultDesc": "Forbidden"}, status=403)
+
+            # ── Shared-secret validation ──
+            if SAFARICOM_WEBHOOK_SECRET:
+                provided_secret = (
+                    request.query.get("secret")
+                    or request.headers.get("X-Webhook-Secret", "")
+                )
+                if not hmac.compare_digest(provided_secret, SAFARICOM_WEBHOOK_SECRET):
+                    logger.warning("Rejected Safaricom webhook: invalid shared secret")
+                    return web.json_response({"ResultCode": 1, "ResultDesc": "Unauthorized"}, status=401)
+
             data = await request.json()
             logger.info("Received Safaricom Daraja IPN: %s", data)
             
@@ -83,7 +105,21 @@ class DashboardWSServer:
     async def paystack_webhook(self, request: web.Request) -> web.Response:
         """Handle incoming Paystack webhook notifications (charge.success)."""
         try:
-            payload = await request.json()
+            raw_body = await request.read()
+
+            # ── HMAC-SHA512 signature verification ──
+            if PAYSTACK_SECRET_KEY:
+                sig_header = request.headers.get("x-paystack-signature", "")
+                expected_sig = hmac.new(
+                    PAYSTACK_SECRET_KEY.encode("utf-8"),
+                    raw_body,
+                    hashlib.sha512,
+                ).hexdigest()
+                if not sig_header or not hmac.compare_digest(sig_header, expected_sig):
+                    logger.warning("Rejected Paystack webhook: invalid signature")
+                    return web.Response(text="Invalid signature", status=401)
+
+            payload = orjson.loads(raw_body)
             event = payload.get("event")
             logger.info("Received Paystack event: %s", event)
 
@@ -125,6 +161,12 @@ class DashboardWSServer:
             return web.Response(text="Error", status=400)
 
     async def _websocket_handler(self, request: web.Request) -> web.WebSocketResponse:
+        # ── Origin allowlist enforcement ──
+        origin = request.headers.get("Origin", "")
+        if WS_ALLOWED_ORIGINS and origin and origin not in WS_ALLOWED_ORIGINS:
+            logger.warning("Rejected WS connection from unauthorised origin: %s", origin)
+            return web.Response(text="Forbidden origin", status=403)
+
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
 
@@ -230,6 +272,63 @@ class DashboardWSServer:
 
     async def broadcast_books(self, books_summary: dict) -> None:
         self._last_books = books_summary
+
+        # Auto-seed initial opportunities from live order books so new clients see spreads instantly
+        if len(self._alert_history) < 8 and books_summary:
+            try:
+                by_sym: dict[str, list[tuple[str, float, float]]] = {}
+                for k, v in books_summary.items():
+                    if not v.get("valid") or not v.get("bid") or not v.get("ask"):
+                        continue
+                    if ":" not in k:
+                        continue
+                    ex, sym = k.split(":", 1)
+                    by_sym.setdefault(sym, []).append((ex, float(v["bid"]), float(v["ask"])))
+
+                for sym, ex_list in by_sym.items():
+                    if len(ex_list) < 2:
+                        continue
+                    best_buy = min(ex_list, key=lambda x: x[2])
+                    best_sell = max(ex_list, key=lambda x: x[1])
+                    if best_buy[0] == best_sell[0]:
+                        continue
+                    ask_price = best_buy[2]
+                    bid_price = best_sell[1]
+                    raw_spread = ((bid_price - ask_price) / ask_price) * 100
+
+                    # Only seed when a real positive spread exists; never fabricate profit.
+                    if raw_spread > 0.0:
+                        est_notional = 100.0
+                        est_fees = 0.20  # rough taker+withdrawal estimate
+                        net_profit_est = max(0.0, est_notional * (raw_spread / 100.0) - est_fees)
+
+                        cand = {
+                            "pair": sym,
+                            "base": sym.split("/")[0],
+                            "quote": sym.split("/")[1] if "/" in sym else "USDT",
+                            "arb_type": "spot",
+                            "buy_exchange": best_buy[0],
+                            "sell_exchange": best_sell[0],
+                            "ask_price": round(ask_price, 8),
+                            "bid_price": round(bid_price, 8),
+                            "raw_spread_pct": round(raw_spread, 4),
+                            "volume": round(100.0 / ask_price, 6),
+                            "fee_maker": 0.10,
+                            "fee_taker": 0.10,
+                            "fee_withdrawal": 0.0,
+                            "fee_network": 0.0,
+                            "net_profit": round(net_profit_est, 2),
+                            "preflight": {"passed": False, "network": None, "risk_level": "unknown", "risk_notes": ["Seed estimate — not preflight-checked"]},
+                            "payment_method": "",
+                            "payment_label": "",
+                            "risk_level": "low",
+                            "seeded": True,
+                            "timestamp": time.time(),
+                        }
+                        self._alert_history.append(cand)
+            except Exception as e:
+                logger.debug("Seed spread generation: %s", e)
+
         msg = orjson.dumps({
             "type": "books",
             "data": books_summary,

@@ -811,6 +811,30 @@ body::before {
   opacity: 1;
 }
 
+.footer-support-wrap {
+  margin: var(--space-xs) 0;
+}
+
+.footer-support-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--color-accent);
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+
+.footer-support-link:hover {
+  background: rgba(0, 240, 255, 0.16);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+}
+
 /* ── Responsive ────────────────────────────────── */
 @media (max-width: 768px) {
   .app-container {
