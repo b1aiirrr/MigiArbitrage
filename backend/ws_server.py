@@ -238,9 +238,10 @@ class DashboardWSServer:
         """Start the aiohttp web server."""
         self.runner = web.AppRunner(self.app, access_log=None)
         await self.runner.setup()
-        site = web.TCPSite(self.runner, WS_SERVER_HOST, WS_SERVER_PORT)
+        # Bind to host=None so server listens on both IPv4 (0.0.0.0) and IPv6 (::)
+        site = web.TCPSite(self.runner, host=None, port=WS_SERVER_PORT)
         await site.start()
-        logger.info("Dashboard WS/HTTP server on http://%s:%d", WS_SERVER_HOST, WS_SERVER_PORT)
+        logger.info("Dashboard WS/HTTP server on port %d (IPv4 + IPv6)", WS_SERVER_PORT)
 
     async def stop(self) -> None:
         if self.runner:
