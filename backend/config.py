@@ -86,7 +86,7 @@ ENABLED_EXCHANGES: list[str] = [
 #  WebSocket Server
 # ──────────────────────────────────────────────
 WS_SERVER_HOST: str = os.getenv("WS_SERVER_HOST", "0.0.0.0")
-WS_SERVER_PORT: int = int(os.getenv("PORT", os.getenv("WS_SERVER_PORT", "8000")))
+WS_SERVER_PORT: int = int(os.getenv("PORT", os.getenv("WS_SERVER_PORT", "10000")))
 WS_ALLOWED_ORIGINS: list[str] = [
     "https://migi-arbitrage.vercel.app",
     "https://migiarbitrage.vercel.app",

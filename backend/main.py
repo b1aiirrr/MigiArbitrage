@@ -164,6 +164,10 @@ async def main() -> None:
     logger.info("Exchanges: %s", ", ".join(ENABLED_EXCHANGES))
 
     # ── Initialize components ──
+    # Dashboard WebSocket & HTTP server (started first to pass cloud health probes immediately)
+    ws_server = DashboardWSServer()
+    await ws_server.start()
+
     book_manager = OrderBookManager(max_depth=20)
 
     # CCXT Engine (replaces individual exchange clients)
@@ -175,9 +179,6 @@ async def main() -> None:
 
     # Telegram alerter
     alerter = TelegramAlerter()
-
-    # Dashboard WebSocket server
-    ws_server = DashboardWSServer()
 
     # Execution engine (dry-run by default)
     executor = ExecutionEngine(ccxt_engine=ccxt_engine, alerter=alerter)
@@ -233,7 +234,6 @@ async def main() -> None:
     ) if SIGNALS_ENABLED else None
 
     # ── Start all tasks ──
-    await ws_server.start()
     await alerter.send_startup_message()
 
     tasks = [
