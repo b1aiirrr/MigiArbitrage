@@ -148,6 +148,25 @@ class CCXTEngine:
     async def _exchange_websocket_loop(self, ex_id: str) -> None:
         """Wrapper to watch all symbols for a specific exchange."""
         exchange = self._exchanges[ex_id]
+        if not exchange.markets:
+            try:
+                await exchange.load_markets()
+            except ccxt.AuthenticationError as auth_err:
+                logger.warning(
+                    "[%s] API credentials invalid (%s) — switching to public mode",
+                    ex_id, auth_err,
+                )
+                exchange.apiKey = None
+                exchange.secret = None
+                exchange.password = None
+                if hasattr(exchange, "options"):
+                    exchange.options["fetchCurrencies"] = False
+                try:
+                    await exchange.load_markets()
+                except Exception as exc:
+                    logger.error("[%s] Failed to load markets: %s", ex_id, exc)
+            except Exception as exc:
+                logger.error("[%s] Failed to load markets: %s", ex_id, exc)
 
         # Base spot symbols watched on every exchange.
         symbols = list(SPOT_SYMBOLS)
@@ -172,6 +191,7 @@ class CCXTEngine:
         for ex_id in self._exchanges:
             task = asyncio.create_task(self._exchange_websocket_loop(ex_id))
             self._ws_tasks[ex_id] = task
+            await asyncio.sleep(0.5)
 
         logger.info(
             "Started order book watchers across %d exchanges",
