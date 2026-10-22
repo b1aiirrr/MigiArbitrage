@@ -234,18 +234,18 @@ P2P_PAYMENT_MAP: dict = {
         "GooglePay": "google_pay",
     },
     "okx": {
-        "M-Pesa": "mpesa", "Mpesa": "mpesa",
-        "Bank Transfer": "bank_transfer", "Bank transfer": "bank_transfer",
-        "PayPal": "paypal",
-        "Skrill": "skrill",
-        "Google Pay": "google_pay",
+        "M-PESA Safaricom": "mpesa", "M-Pesa Paybill": "mpesa", "M-pesa Pochi-la-Biashara": "mpesa",
+        "M-Pesa": "mpesa", "Mpesa": "mpesa", "Airtel Money": "mpesa",
+        "Bank Transfer": "bank_transfer", "Bank transfer": "bank_transfer", "bank": "bank_transfer",
+        "I&M Bank": "bank_transfer", "Equity Bank Group": "bank_transfer", "Co-operative Bank": "bank_transfer",
+        "KCB Bank": "bank_transfer", "NCBA Bank": "bank_transfer", "family bank": "bank_transfer",
+        "PayPal": "paypal", "Skrill": "skrill", "Google Pay": "google_pay",
     },
     "bybit": {
-        "M-PESA": "mpesa", "M-Pesa": "mpesa",
-        "Bank Transfer": "bank_transfer",
-        "PayPal": "paypal",
-        "Skrill": "skrill",
-        "Google Pay": "google_pay",
+        "176": "mpesa", "664": "mpesa", "M-PESA": "mpesa", "M-Pesa": "mpesa",
+        "14": "bank_transfer", "65": "bank_transfer", "170": "bank_transfer", "502": "bank_transfer",
+        "109": "bank_transfer", "6": "bank_transfer",
+        "Bank Transfer": "bank_transfer", "PayPal": "paypal", "Skrill": "skrill", "Google Pay": "google_pay",
     },
 }
 

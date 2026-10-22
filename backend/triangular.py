@@ -387,7 +387,9 @@ class TriangularScanner:
                 )
 
                 if self.on_spread:
-                    await self.on_spread(opportunity.to_dict())
+                    res = self.on_spread(opportunity.to_dict())
+                    if asyncio.iscoroutine(res):
+                        await res
 
                 self._opportunity_count += 1
 

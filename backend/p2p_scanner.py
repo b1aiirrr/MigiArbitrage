@@ -177,22 +177,28 @@ class P2PScanner:
         if not ask_ads or not bid_ads:
             return
 
-        # Spatial arbitrage: buy USDT at the cheapest ask, sell at the best bid.
+        # Spatial arbitrage: buy USDT at the lowest asks, sell at the highest bids.
         # We evaluate per payment method so the two legs are settleable.
         for pm_key, pm_cfg in PAYMENT_METHODS.items():
-            pm_asks = [a for a in ask_ads if pm_key in a.payment_methods]
-            pm_bids = [a for a in bid_ads if pm_key in a.payment_methods]
+            pm_asks = sorted([a for a in ask_ads if pm_key in a.payment_methods], key=lambda a: a.price)[:15]
+            pm_bids = sorted([a for a in bid_ads if pm_key in a.payment_methods], key=lambda a: a.price, reverse=True)[:15]
             if not pm_asks or not pm_bids:
                 continue
 
-            cheapest_ask = min(pm_asks, key=lambda a: a.price)
-            best_bid = max(pm_bids, key=lambda a: a.price)
-
-            # No edge if the best place to sell isn't above the cheapest place to buy.
-            if best_bid.price <= cheapest_ask.price:
-                continue
-
-            await self._evaluate_p2p_spread(cheapest_ask, best_bid, pm_key, pm_cfg)
+            found_for_pm = 0
+            for ask_ad in pm_asks:
+                for bid_ad in pm_bids:
+                    # No edge if the best place to sell isn't above the cheapest place to buy.
+                    if bid_ad.price <= ask_ad.price:
+                        continue
+                    prev_opp_count = self._opportunity_count
+                    await self._evaluate_p2p_spread(ask_ad, bid_ad, pm_key, pm_cfg)
+                    if self._opportunity_count > prev_opp_count:
+                        found_for_pm += 1
+                        if found_for_pm >= 3:
+                            break
+                if found_for_pm >= 3:
+                    break
 
     async def _evaluate_p2p_spread(
         self, ask_ad: P2PAdvert, bid_ad: P2PAdvert, pm_key: str, pm_cfg: dict
@@ -207,12 +213,20 @@ class P2PScanner:
         buy_rate = ask_ad.price    # KES per USDT we pay
         sell_rate = bid_ad.price   # KES per USDT we receive
 
-        volume = min(
-            ask_ad.available, ask_ad.max_amount,
-            bid_ad.available, bid_ad.max_amount,
-            MAX_CAPITAL_USD,
+        # Convert fiat min/max transaction limits (in KES) to crypto units (USDT)
+        ask_min_crypto = (ask_ad.min_amount / buy_rate) if buy_rate > 0 else 0.0
+        ask_max_crypto = min(
+            ask_ad.available,
+            (ask_ad.max_amount / buy_rate) if (ask_ad.max_amount > 0 and buy_rate > 0) else ask_ad.available,
         )
-        if volume < max(ask_ad.min_amount, bid_ad.min_amount, 10):
+        bid_min_crypto = (bid_ad.min_amount / sell_rate) if sell_rate > 0 else 0.0
+        bid_max_crypto = min(
+            bid_ad.available,
+            (bid_ad.max_amount / sell_rate) if (bid_ad.max_amount > 0 and sell_rate > 0) else bid_ad.available,
+        )
+
+        volume = min(ask_max_crypto, bid_max_crypto, MAX_CAPITAL_USD)
+        if volume < max(ask_min_crypto, bid_min_crypto, 5.0):
             return
 
         # ── Gross spread in KES ──
@@ -275,7 +289,9 @@ class P2PScanner:
         )
 
         if self.on_spread:
-            await self.on_spread(opportunity.to_dict())
+            res = self.on_spread(opportunity.to_dict())
+            if asyncio.iscoroutine(res):
+                await res
 
         self._opportunity_count += 1
 
@@ -397,7 +413,17 @@ class P2PScanner:
             payment_keys = []
             for pm in item.get("paymentMethods", []):
                 mapped = P2P_PAYMENT_MAP.get("okx", {}).get(pm)
-                if mapped:
+                if not mapped:
+                    pm_str = str(pm).lower()
+                    if "pesa" in pm_str or "airtel" in pm_str:
+                        mapped = "mpesa"
+                    elif "bank" in pm_str:
+                        mapped = "bank_transfer"
+                    elif "paypal" in pm_str:
+                        mapped = "paypal"
+                    elif "skrill" in pm_str:
+                        mapped = "skrill"
+                if mapped and mapped not in payment_keys:
                     payment_keys.append(mapped)
 
             if not payment_keys:
@@ -435,7 +461,7 @@ class P2PScanner:
                 async with session.post(
                     url, json=payload,
                     timeout=aiohttp.ClientTimeout(total=15),
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
                 ) as resp:
                     if resp.status != 200:
                         return []
@@ -453,8 +479,14 @@ class P2PScanner:
             payment_keys = []
             for pm in item.get("payments", []):
                 pm_name = pm if isinstance(pm, str) else pm.get("paymentName", "")
-                mapped = P2P_PAYMENT_MAP.get("bybit", {}).get(pm_name)
-                if mapped:
+                mapped = P2P_PAYMENT_MAP.get("bybit", {}).get(str(pm_name))
+                if not mapped:
+                    pm_str = str(pm_name).lower()
+                    if "pesa" in pm_str or "176" in pm_str or "664" in pm_str:
+                        mapped = "mpesa"
+                    elif "bank" in pm_str or pm_str in ("14", "65", "170", "502", "109", "6"):
+                        mapped = "bank_transfer"
+                if mapped and mapped not in payment_keys:
                     payment_keys.append(mapped)
 
             if not payment_keys:
